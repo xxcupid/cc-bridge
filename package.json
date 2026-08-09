@@ -15,7 +15,7 @@
   },
   "keywords": ["feishu", "lark", "claude-code", "coding-agent", "bridge"],
   "bin": { "oscar-lark-bridge": "./dist/cli.js" },
-  "files": ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "files": ["dist", "README.md", "LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md"],
   "engines": { "node": ">=22.13.0" },
   "packageManager": "pnpm@10.33.0",
   "scripts": {

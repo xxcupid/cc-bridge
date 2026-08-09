@@ -1,3 +1,10 @@
+/**
+ * Portions of the Claude stream event shape were adapted from
+ * zarazhangrui/lark-coding-agent-bridge (MIT License), commit
+ * e5d3ce57ca95212cfa53965a6f2cc2d998aa691c.
+ * Copyright (c) 2026 Lark Channel Bridge contributors.
+ * See LICENSES/lark-coding-agent-bridge-MIT.txt and THIRD_PARTY_NOTICES.md.
+ */
 import type { AgentEvent } from '../../domain/agent.js';
 
 interface ContentBlock {
