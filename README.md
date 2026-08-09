@@ -36,12 +36,16 @@ claude --version
 
 ```bash
 git clone https://github.com/xxcupid/cc-bridge.git
-cd oscar-lark-bridge
-pnpm install
+cd cc-bridge
+corepack enable
+pnpm install --frozen-lockfile
 pnpm check
+pnpm build
+node dist/cli.js doctor
+node dist/cli.js run
 ```
 
-当前不要从未知来源下载预构建产物。
+项目当前未发布 npm 包，也未提供预构建二进制；用户需要从 GitHub clone 源码后安装、构建并运行。当前不要从未知来源下载预构建产物。
 
 ## Claude-only 配置
 
