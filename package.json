@@ -1,0 +1,42 @@
+{
+  "name": "oscar-lark-bridge",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Connect Feishu/Lark to local Claude Code with streaming cards, approvals, resumable sessions, and workspace controls.",
+  "license": "MIT",
+  "author": "oscar-lark-bridge contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xxcupid/cc-bridge.git"
+  },
+  "homepage": "https://github.com/xxcupid/cc-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/xxcupid/cc-bridge/issues"
+  },
+  "keywords": ["feishu", "lark", "claude-code", "coding-agent", "bridge"],
+  "bin": { "oscar-lark-bridge": "./dist/cli.js" },
+  "files": ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "engines": { "node": ">=22.13.0" },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.ts run",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@larksuite/channel": "^0.4.1",
+    "commander": "^12.1.0",
+    "cross-spawn": "^7.0.6"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.22.4",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
