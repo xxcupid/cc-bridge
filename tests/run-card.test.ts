@@ -33,6 +33,28 @@ describe('RunCardState', () => {
     question.apply({ type: 'question.requested', questionId: 'raw', token: 'opaque', prompt: 'Pick', options: ['A', 'B'] });
     expect(JSON.stringify(question.render())).not.toContain('"tag":"action"');
   });
+  it('renders compact Skill and Terminal summaries without successful output', () => {
+    const state = new RunCardState('r', 's');
+    state.apply({ type: 'tool.started', toolCallId: 'skill', name: 'Skill', input: { skill: 'lark-drive' } });
+    state.apply({ type: 'tool.completed', toolCallId: 'skill', output: 'Launching skill: lark-drive', isError: false });
+    state.apply({ type: 'tool.started', toolCallId: 'terminal', name: 'Terminal', input: { command: 'agent-browser open https://example.com' } });
+    state.apply({ type: 'tool.completed', toolCallId: 'terminal', output: 'Page opened', isError: false });
+    const card = JSON.stringify(state.render());
+    expect(card).toContain('Load skill');
+    expect(card).toContain('lark-drive');
+    expect(card).toContain('Run command');
+    expect(card).toContain('agent-browser open https://example.com');
+    expect(card).not.toContain('Launching skill: lark-drive');
+    expect(card).not.toContain('Page opened');
+  });
+  it('prefers the concrete command over a human-readable description', () => {
+    const state = new RunCardState('r', 's');
+    state.apply({ type: 'tool.started', toolCallId: 'terminal', name: 'Terminal', input: { description: '读取飞书文档内容', command: 'lark-cli docs +fetch --doc token' } });
+    state.apply({ type: 'tool.completed', toolCallId: 'terminal', output: 'done', isError: false });
+    const card = JSON.stringify(state.render());
+    expect(card).toContain('lark-cli docs +fetch --doc token');
+    expect(card).not.toContain('读取飞书文档内容');
+  });
   it('keeps stop available as a lightweight command hint without a button', () => {
     const card = JSON.stringify(new RunCardState('r', 's').render());
     expect(card).toContain('发送 `/stop` 可停止');

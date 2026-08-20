@@ -50,6 +50,7 @@ export class BridgeApplication {
     if (!message.content.trim()) return;
     const scope = messageScope(message);
     if (await this.commands.handle(message)) return;
+    const reactionId = await addWorkingReaction(this.options.channel, message.messageId);
     await this.locks.runExclusive(scope, async () => {
       const runId = randomUUID();
       const session = this.options.sessions.active(scope) ?? this.options.sessions.create(scope, {
@@ -79,6 +80,7 @@ export class BridgeApplication {
           runId, sessionId: session.id, scope, operatorId: message.senderId, events: handle.events,
         }));
       } finally {
+        await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
         const active = this.activeRuns.get(scope);
         if (active?.runId === runId) this.activeRuns.delete(scope);
       }
@@ -148,6 +150,24 @@ export class BridgeApplication {
       return staleAction();
     }
     return undefined;
+  }
+}
+
+async function addWorkingReaction(channel: ChannelPort, messageId: string): Promise<string | undefined> {
+  if (!channel.addReaction) return undefined;
+  try {
+    return await channel.addReaction(messageId, 'Typing');
+  } catch {
+    return undefined;
+  }
+}
+
+async function removeWorkingReaction(channel: ChannelPort, messageId: string, reactionId: string | undefined): Promise<void> {
+  if (!reactionId || !channel.removeReaction) return;
+  try {
+    await channel.removeReaction(messageId, reactionId);
+  } catch {
+    // Reaction cleanup is best effort and must not mask the agent result.
   }
 }
 

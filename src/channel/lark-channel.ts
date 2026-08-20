@@ -88,6 +88,14 @@ export class LarkChannelGateway implements ChannelPort {
     await this.channel.send(chatId, { markdown }, options);
   }
 
+  addReaction(messageId: string, emojiType: string): Promise<string> {
+    return this.channel.addReaction(messageId, emojiType);
+  }
+
+  removeReaction(messageId: string, reactionId: string): Promise<void> {
+    return this.channel.removeReaction(messageId, reactionId);
+  }
+
   connect(): Promise<void> { return this.channel.connect(); }
   disconnect(): Promise<void> { return this.channel.disconnect(); }
 }

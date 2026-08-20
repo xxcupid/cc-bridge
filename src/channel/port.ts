@@ -20,6 +20,8 @@ export interface ChannelPort {
     options?: StreamCardOptions,
   ): Promise<{ messageId: string }>;
   sendMarkdown(chatId: string, markdown: string, options?: StreamCardOptions): Promise<void>;
+  addReaction?(messageId: string, emojiType: string): Promise<string>;
+  removeReaction?(messageId: string, reactionId: string): Promise<void>;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
 }
