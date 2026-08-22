@@ -26,7 +26,7 @@ describe('BridgeApplication approval flow', () => {
     });
     await app.start();
     const running = channel.emitMessage({ messageId: 'm1', chatId: 'c1', chatType: 'p2p', senderId: 'u1', content: 'edit it' });
-    const token = await channel.waitForToken();
+    const token = await channel.waitForToken('approve');
     expect(token).toBeTruthy();
     expect(JSON.stringify(channel.cards)).not.toContain('req-secret');
 
@@ -41,6 +41,32 @@ describe('BridgeApplication approval flow', () => {
 
     const replay = await channel.emitAction({ messageId: 'card', chatId: 'c1', operatorId: 'u1', value: { action: 'approve', approved: true, token } });
     expect(replay).toMatchObject({ toast: { type: 'warning' } });
+    await app.stop();
+  });
+
+  it('round-trips AskUserQuestion through an operator-bound form token', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oscar-bridge-'));
+    const channel = new FakeChannel();
+    const adapter = new QuestionAdapter();
+    const agents = new AgentRegistry(); agents.register(adapter);
+    const app = new BridgeApplication({
+      channel, agents, defaultAgent: 'claude', defaultWorkspace: dir,
+      permission: { mode: 'default', maxAccess: 'workspace' }, cardThrottleMs: 0,
+      sessions: new SessionStore(join(dir, 'sessions.json')),
+      workspaces: new WorkspaceStore(join(dir, 'workspaces.json')),
+      approvals: new ApprovalStore(join(dir, 'approvals.json')),
+    });
+    await app.start();
+    const running = channel.emitMessage({ messageId: 'm2', chatId: 'c1', chatType: 'p2p', senderId: 'u1', content: 'ask me' });
+    const token = await channel.waitForToken('answer');
+    expect(JSON.stringify(channel.cards)).not.toContain('question-secret');
+
+    const denied = await channel.emitAction({ messageId: 'card', chatId: 'c1', operatorId: 'u2', value: { action: 'answer', token }, formValue: { answer: 'B' } });
+    expect(denied).toMatchObject({ toast: { type: 'warning' } });
+    const accepted = await channel.emitAction({ messageId: 'card', chatId: 'c1', operatorId: 'u1', value: { action: 'answer', token }, formValue: { answer: 'B' } });
+    expect(accepted).toMatchObject({ toast: { type: 'success' } });
+    await running;
+    expect(adapter.answers).toEqual([{ questionId: 'question-secret', answer: 'B' }]);
     await app.stop();
   });
 });
@@ -61,9 +87,9 @@ class FakeChannel implements ChannelPort {
   async disconnect(): Promise<void> {}
   emitMessage(message: IncomingMessage): Promise<void> { return this.messageHandler!(message); }
   emitAction(action: CardAction) { return this.actionHandler!(action); }
-  async waitForToken(): Promise<string> {
+  async waitForToken(action: 'approve' | 'answer'): Promise<string> {
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      const match = JSON.stringify(this.cards).match(/"action":"approve"[^}]*"token":"([^"]+)"/);
+      const match = JSON.stringify(this.cards).match(new RegExp(`"action":"${action}"[^}]*"token":"([^"]+)"`));
       if (match?.[1]) return match[1];
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -86,6 +112,24 @@ class ApprovalAdapter implements AgentAdapter {
       events: events(), cancel: async () => {},
       approve: async (requestId, approved) => { this.decisions.push({ requestId, approved }); this.resolve?.(); },
       answer: async () => {},
+    };
+  }
+}
+
+class QuestionAdapter implements AgentAdapter {
+  readonly id = 'claude' as const;
+  answers: Array<{ questionId: string; answer: string }> = [];
+  private resolve?: () => void;
+  async start(_request: AgentRunRequest): Promise<AgentRunHandle> {
+    const wait = new Promise<void>((resolve) => { this.resolve = resolve; });
+    const events = async function* (): AsyncIterable<AgentEvent> {
+      yield { type: 'question.requested', questionId: 'question-secret', prompt: 'Choose', options: ['A', 'B'] };
+      await wait;
+      yield { type: 'run.completed' };
+    };
+    return {
+      events: events(), cancel: async () => {}, approve: async () => {},
+      answer: async (questionId, answer) => { this.answers.push({ questionId, answer }); this.resolve?.(); },
     };
   }
 }

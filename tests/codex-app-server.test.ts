@@ -52,6 +52,18 @@ describe('CodexAppServerAdapter', () => {
     child.send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'run.completed' } });
   });
+
+  it('resumes a persisted native thread when resumeId is present', async () => {
+    const child = new FakeAppServer();
+    const adapter = new CodexAppServerAdapter({ spawnProcess: (() => child as unknown as ChildProcessWithoutNullStreams) as unknown as typeof spawn });
+    const handle = await adapter.start({ runId: 'r1', sessionId: 's1', prompt: 'continue', cwd: '/tmp', resumeId: 'thread-existing', permission: { mode: 'default', maxAccess: 'workspace' } });
+    const resume = child.messages.find((item) => item.method === 'thread/resume');
+    expect(resume).toMatchObject({ params: { threadId: 'thread-existing', persistExtendedHistory: true } });
+    const iterator = handle.events[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'session.started', nativeSessionId: 'thread-1' } });
+    child.send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'run.completed' } });
+  });
 });
 
 class FakeAppServer extends EventEmitter {

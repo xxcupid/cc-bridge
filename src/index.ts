@@ -23,6 +23,8 @@ export * from './session/session-store.js';
 export * from './workspace/workspace-policy.js';
 export * from './workspace/workspace-store.js';
 export * from './config/runtime-config.js';
+export * from './config/profile.js';
 export * from './approval/approval-store.js';
 export * from './service/launchd.js';
 export * from './agents/shared/terminate-process.js';
+export * from './runtime/instance-lock.js';

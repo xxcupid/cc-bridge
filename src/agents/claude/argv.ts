@@ -14,6 +14,7 @@ export function claudePermissionMode(request: AgentRunRequest): ClaudePermission
 
 export function buildClaudeArgs(request: AgentRunRequest): string[] {
   const args = [
+    '--print',
     '--input-format',
     'stream-json',
     '--output-format',

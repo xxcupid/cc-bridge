@@ -4,28 +4,35 @@ import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { serviceEnvironment } from '../config/runtime-config.js';
+import { DEFAULT_PROFILE, normalizeProfileName } from '../config/profile.js';
 
 export const LAUNCHD_LABEL = 'com.oscar.lark-bridge';
 
 export interface LaunchdPaths { plist: string; envFile: string; stdout: string; stderr: string; }
-export interface PlistInput { nodePath: string; cliPath: string; envPath: string; paths: LaunchdPaths; }
+export interface PlistInput { nodePath: string; cliPath: string; envPath: string; rootDir: string; profile: string; paths: LaunchdPaths; }
 export interface ServiceResult { ok: boolean; stdout: string; stderr: string; }
 
-export function launchdPaths(dataDir: string, home = homedir()): LaunchdPaths {
+export function launchdLabel(profile = DEFAULT_PROFILE): string {
+  profile = normalizeProfileName(profile);
+  return profile === DEFAULT_PROFILE ? LAUNCHD_LABEL : `${LAUNCHD_LABEL}.${profile}`;
+}
+
+export function launchdPaths(dataDir: string, home = homedir(), profile = DEFAULT_PROFILE): LaunchdPaths {
   const logDir = join(dataDir, 'logs');
   return {
-    plist: join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`),
+    plist: join(home, 'Library', 'LaunchAgents', `${launchdLabel(profile)}.plist`),
     envFile: join(dataDir, 'service-env.json'), stdout: join(logDir, 'service.stdout.log'), stderr: join(logDir, 'service.stderr.log'),
   };
 }
 
 export function buildLaunchdPlist(input: PlistInput): string {
   const xml = escapeXml;
+  const label = launchdLabel(input.profile);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>${LAUNCHD_LABEL}</string>
-  <key>ProgramArguments</key><array><string>${xml(resolve(input.nodePath))}</string><string>${xml(resolve(input.cliPath))}</string><string>run</string></array>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key><array><string>${xml(resolve(input.nodePath))}</string><string>${xml(resolve(input.cliPath))}</string><string>run</string><string>--profile</string><string>${xml(input.profile)}</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ProcessType</key><string>Background</string>
@@ -33,6 +40,7 @@ export function buildLaunchdPlist(input: PlistInput): string {
   <key>StandardErrorPath</key><string>${xml(input.paths.stderr)}</string>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>${xml(input.envPath)}</string>
+    <key>OSCAR_LARK_HOME</key><string>${xml(input.rootDir)}</string>
     <key>OSCAR_LARK_ENV_FILE</key><string>${xml(input.paths.envFile)}</string>
   </dict>
 </dict></plist>
@@ -41,8 +49,12 @@ export function buildLaunchdPlist(input: PlistInput): string {
 
 export class LaunchdService {
   readonly paths: LaunchdPaths;
-  constructor(private readonly input: { dataDir: string; nodePath: string; cliPath: string; envPath: string; home?: string; uid?: number }) {
-    this.paths = launchdPaths(input.dataDir, input.home);
+  readonly profile: string;
+  readonly label: string;
+  constructor(private readonly input: { profile?: string; rootDir?: string; dataDir: string; nodePath: string; cliPath: string; envPath: string; home?: string; uid?: number }) {
+    this.profile = normalizeProfileName(input.profile ?? DEFAULT_PROFILE);
+    this.label = launchdLabel(this.profile);
+    this.paths = launchdPaths(input.dataDir, input.home, this.profile);
   }
   async install(env: NodeJS.ProcessEnv = process.env): Promise<void> {
     if (process.platform !== 'darwin') throw new Error('service management currently supports macOS launchd only');
@@ -53,7 +65,7 @@ export class LaunchdService {
     await mkdir(dirname(this.paths.plist), { recursive: true });
     await mkdir(dirname(this.paths.stdout), { recursive: true });
     await writePrivate(this.paths.envFile, `${JSON.stringify(captured, null, 2)}\n`);
-    await writePrivate(this.paths.plist, buildLaunchdPlist({ nodePath: this.input.nodePath, cliPath: this.input.cliPath, envPath: this.input.envPath, paths: this.paths }));
+    await writePrivate(this.paths.plist, buildLaunchdPlist({ nodePath: this.input.nodePath, cliPath: this.input.cliPath, envPath: this.input.envPath, rootDir: this.input.rootDir ?? this.input.dataDir, profile: this.profile, paths: this.paths }));
   }
   installed(): boolean { return existsSync(this.paths.plist) && existsSync(this.paths.envFile); }
   loaded(): boolean { return runLaunchctl(['print', this.target()]).ok; }
@@ -78,7 +90,7 @@ export class LaunchdService {
     await rm(this.paths.envFile, { force: true });
   }
   private domain(): string { return `gui/${this.input.uid ?? userInfo().uid}`; }
-  private target(): string { return `${this.domain()}/${LAUNCHD_LABEL}`; }
+  private target(): string { return `${this.domain()}/${this.label}`; }
 }
 
 async function writePrivate(path: string, content: string): Promise<void> {

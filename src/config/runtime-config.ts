@@ -16,6 +16,7 @@ export interface RuntimeConfig {
   dataDir: string;
   claudeBinary: string;
   codexBinary: string;
+  runTimeoutMs: number;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -36,17 +37,19 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     dataDir: resolve(env.OSCAR_LARK_DATA_DIR ?? join(homedir(), '.oscar-lark-bridge')),
     claudeBinary: env.OSCAR_LARK_CLAUDE_BINARY ?? 'claude',
     codexBinary: env.OSCAR_LARK_CODEX_BINARY ?? 'codex',
+    runTimeoutMs: nonNegativeInteger(env.OSCAR_LARK_RUN_TIMEOUT_MS ?? '1800000', 'OSCAR_LARK_RUN_TIMEOUT_MS'),
   };
 }
 
-const SERVICE_ENV_KEYS = [
+export const SERVICE_ENV_KEYS = [
   'OSCAR_LARK_APP_ID', 'OSCAR_LARK_APP_SECRET', 'OSCAR_LARK_WORKSPACE', 'OSCAR_LARK_DEFAULT_AGENT',
   'OSCAR_LARK_MODE', 'OSCAR_LARK_MAX_ACCESS', 'OSCAR_LARK_DOMAIN', 'OSCAR_LARK_DM_ALLOWLIST',
   'OSCAR_LARK_GROUP_ALLOWLIST', 'OSCAR_LARK_REQUIRE_MENTION', 'OSCAR_LARK_DATA_DIR',
-  'OSCAR_LARK_CLAUDE_BINARY', 'OSCAR_LARK_CODEX_BINARY',
+  'OSCAR_LARK_CLAUDE_BINARY', 'OSCAR_LARK_CODEX_BINARY', 'OSCAR_LARK_RUN_TIMEOUT_MS',
 ] as const;
 
 export function serviceEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  env = mergeServiceEnvironment(env);
   const result: Record<string, string> = {};
   for (const key of SERVICE_ENV_KEYS) if (env[key] !== undefined) result[key] = env[key]!;
   return result;
@@ -74,4 +77,10 @@ function csv(value: string | undefined): string[] { return value?.split(',').map
 function oneOf<const T extends readonly string[]>(value: string, allowed: T, key: string): T[number] {
   if (!allowed.includes(value)) throw new Error(`${key} must be one of: ${allowed.join(', ')}`);
   return value as T[number];
+}
+function nonNegativeInteger(value: string, key: string): number {
+  if (!/^\d+$/.test(value)) throw new Error(`${key} must be a non-negative integer`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${key} must be a safe integer`);
+  return parsed;
 }

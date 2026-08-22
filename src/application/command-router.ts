@@ -31,6 +31,7 @@ export class CommandRouter {
       case '/current': await this.current(message, scope); break;
       case '/resume': await this.resume(message, scope, args); break;
       case '/end': await this.end(message, scope); break;
+      case '/stop': await this.stop(message, scope); break;
       case '/cd': await this.cd(message, scope, args); break;
       case '/ws': case '/workspace': await this.workspace(message, scope, parts); break;
       case '/agent': await this.agent(message, scope, args); break;
@@ -41,7 +42,6 @@ export class CommandRouter {
   }
 
   private async newSession(message: IncomingMessage, scope: string, name: string): Promise<void> {
-    await this.options.cancelScope(scope);
     const current = this.options.sessions.active(scope);
     const session = this.options.sessions.create(scope, {
       name, agentId: current?.agentId ?? this.options.defaultAgent,
@@ -61,7 +61,6 @@ export class CommandRouter {
 
   private async switch(message: IncomingMessage, scope: string, target: string): Promise<void> {
     if (!target) { await this.reply(message, '用法：`/switch <名称或ID前缀>`'); return; }
-    await this.options.cancelScope(scope);
     const session = this.options.sessions.switch(scope, target);
     await this.reply(message, session ? `已切换到 **${session.name}**。` : `未找到 Session：\`${target}\``);
   }
@@ -82,6 +81,11 @@ export class CommandRouter {
     await this.options.cancelScope(scope);
     const ended = this.options.sessions.end(scope);
     await this.reply(message, ended ? `已结束 Session：**${ended.name}**。` : '当前没有活动 Session。');
+  }
+
+  private async stop(message: IncomingMessage, scope: string): Promise<void> {
+    const stopped = await this.options.cancelScope(scope);
+    await this.reply(message, stopped ? '正在停止当前任务。' : '当前没有运行中的任务。');
   }
 
   private async cd(message: IncomingMessage, scope: string, input: string): Promise<void> {

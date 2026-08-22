@@ -12,7 +12,7 @@ function request(overrides: Partial<AgentRunRequest> = {}): AgentRunRequest {
 describe('buildClaudeArgs', () => {
   it('uses stream-json and default permission mode', () => {
     const args = buildClaudeArgs(request());
-    expect(args).toEqual(expect.arrayContaining(['--output-format', 'stream-json', '--input-format', 'stream-json', '--permission-prompt-tool', 'stdio']));
+    expect(args).toEqual(expect.arrayContaining(['--print', '--output-format', 'stream-json', '--input-format', 'stream-json', '--permission-prompt-tool', 'stdio']));
     expect(args).not.toContain('--permission-mode');
   });
 

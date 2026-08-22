@@ -56,14 +56,16 @@ export class ClaudeAdapter implements AgentAdapter {
         }
         const translated = translateClaudeEvent(raw);
         const approval = translated.find((event) => event.type === 'approval.requested');
-        if (approval?.type === 'approval.requested' && request.permission.mode === 'yolo') {
-          const decision = decidePermission('yolo', request.permission.maxAccess, approval.access);
+        if (approval?.type === 'approval.requested') {
+          const decision = decidePermission(request.permission.mode, request.permission.maxAccess, approval.access);
           const input = pendingInputs.get(approval.requestId) ?? {};
-          writeJsonLine(child, controlResponse(approval.requestId, decision.outcome === 'allow'
-            ? { behavior: 'allow', updatedInput: input }
-            : { behavior: 'deny', message: decision.reason }));
-          pendingInputs.delete(approval.requestId);
-          return;
+          if (decision.outcome !== 'ask') {
+            writeJsonLine(child, controlResponse(approval.requestId, decision.outcome === 'allow'
+              ? { behavior: 'allow', updatedInput: input }
+              : { behavior: 'deny', message: decision.reason }));
+            pendingInputs.delete(approval.requestId);
+            return;
+          }
         }
         for (const event of translated) {
           if (event.type === 'run.completed' || event.type === 'run.failed') terminalEventSeen = true;
