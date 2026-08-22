@@ -13,8 +13,8 @@ export class ThrottledUpdater<T> {
   schedule(value: T): void {
     this.pending = value;
     const remaining = Math.max(0, this.intervalMs - (this.now() - this.lastFlushAt));
-    if (remaining === 0) void this.flush();
-    else if (!this.timer) this.timer = setTimeout(() => void this.flush(), remaining);
+    if (remaining === 0) this.triggerFlush();
+    else if (!this.timer) this.timer = setTimeout(() => this.triggerFlush(), remaining);
   }
 
   async flushNow(): Promise<void> {
@@ -34,7 +34,9 @@ export class ThrottledUpdater<T> {
     this.chain = this.chain.then(() => this.sink(value));
     await this.chain;
     if (this.pending !== undefined && !this.timer) {
-      this.timer = setTimeout(() => void this.flush(), this.intervalMs);
+      this.timer = setTimeout(() => this.triggerFlush(), this.intervalMs);
     }
   }
+
+  private triggerFlush(): void { void this.flush().catch(() => undefined); }
 }

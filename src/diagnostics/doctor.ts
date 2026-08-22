@@ -6,15 +6,15 @@ export interface DoctorCheck {
   required: boolean;
 }
 
-export function agentDoctorChecks(selected: AgentId, selectedAvailable: boolean): DoctorCheck[] {
+export function agentDoctorChecks(selected: AgentId, availability: Record<AgentId, boolean>): DoctorCheck[] {
   const other: AgentId = selected === 'claude' ? 'codex' : 'claude';
   return [
-    { name: selected, ok: selectedAvailable, required: true },
-    { name: other, ok: true, required: false },
+    { name: selected, ok: availability[selected], required: true },
+    { name: other, ok: availability[other], required: false },
   ];
 }
 
 export function formatDoctorCheck(check: DoctorCheck): string {
-  const status = check.required ? (check.ok ? 'PASS' : 'FAIL') : 'SKIP';
-  return `${status} ${check.name}${check.required ? '' : ' (not selected)'}`;
+  if (check.required) return `${check.ok ? 'PASS' : 'FAIL'} ${check.name}`;
+  return check.ok ? `PASS ${check.name} (optional)` : `SKIP ${check.name} (not installed, optional)`;
 }

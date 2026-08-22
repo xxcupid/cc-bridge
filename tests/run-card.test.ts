@@ -23,15 +23,23 @@ describe('RunCardState', () => {
   });
   it('uses CardKit 2.0 callback buttons for approvals and choices', () => {
     const approval = new RunCardState('r', 's');
-    approval.apply({ type: 'approval.requested', requestId: 'raw', token: 'opaque', action: 'run command', access: 'workspace' });
+    approval.apply({ type: 'approval.requested', requestId: 'raw', token: 'opaque', action: 'run command', access: 'workspace', details: { command: 'npm test' } });
     const approvalCard = JSON.stringify(approval.render());
     expect(approvalCard).not.toContain('"tag":"action"');
     expect(approvalCard).toContain('"tag":"column_set"');
     expect(approvalCard).toContain('"behaviors":[{"type":"callback"');
+    expect(approvalCard).toContain('需要授权');
+    expect(approvalCard).toContain('run command');
+    expect(approvalCard).toContain('当前工作区');
+    expect(approvalCard).toContain('npm test');
+    expect(approvalCard).not.toContain('"requestId":"raw"');
 
     const question = new RunCardState('r', 's');
     question.apply({ type: 'question.requested', questionId: 'raw', token: 'opaque', prompt: 'Pick', options: ['A', 'B'] });
-    expect(JSON.stringify(question.render())).not.toContain('"tag":"action"');
+    const questionCard = JSON.stringify(question.render());
+    expect(questionCard).not.toContain('"tag":"action"');
+    expect(questionCard).toContain('需要你的回答');
+    expect(questionCard).toContain('Pick');
   });
   it('renders complete OpenClaw-style runtime metrics and preserves pending interactions', () => {
     const state = new RunCardState('r', 's', 1_000);
@@ -66,6 +74,18 @@ describe('RunCardState', () => {
     expect(card).toContain('lark-cli docs +fetch --doc token');
     expect(card).not.toContain('读取飞书文档内容');
   });
+  it('hides successful output but preserves a bounded failed-tool diagnostic', () => {
+    const state = new RunCardState('r', 's');
+    state.apply({ type: 'tool.started', toolCallId: 'ok', name: 'Bash', input: { command: 'pwd' } });
+    state.apply({ type: 'tool.completed', toolCallId: 'ok', output: 'successful secret output', isError: false });
+    state.apply({ type: 'tool.started', toolCallId: 'failed', name: 'Bash', input: { command: 'false' } });
+    state.apply({ type: 'tool.completed', toolCallId: 'failed', output: `command failed\n${'x'.repeat(2_500)}`, isError: true });
+    const card = JSON.stringify(state.render());
+    expect(card).not.toContain('successful secret output');
+    expect(card).toContain('错误详情');
+    expect(card).toContain('command failed');
+    expect(card).not.toContain('x'.repeat(2_001));
+  });
   it('keeps stop available as a lightweight command hint without a button', () => {
     const card = JSON.stringify(new RunCardState('r', 's').render());
     expect(card).toContain('发送 `/stop` 可停止');
@@ -76,7 +96,9 @@ describe('RunCardState', () => {
     state.apply({ type: 'question.requested', questionId: 'raw-secret', token: 'opaque-token', prompt: 'Which path?' });
     const card = JSON.stringify(state.render());
     expect(card).toContain('form_action_type');
+    expect(card).toContain('Which path?');
     expect(card).toContain('opaque-token');
+    expect(card).toContain('agent_question_submit_opaque-token');
     expect(card).not.toContain('raw-secret');
     state.apply({ type: 'text.delta', text: 'continued' });
     expect(JSON.stringify(state.render())).not.toContain('agent_question_form');

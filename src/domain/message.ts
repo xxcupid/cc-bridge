@@ -12,6 +12,7 @@ export interface CardAction {
   chatId: string;
   operatorId: string;
   value: unknown;
+  actionName?: string;
   formValue?: Record<string, unknown>;
 }
 

@@ -81,15 +81,15 @@ Expected: Codex uses the same streaming card model, records a native thread ID, 
 
 | Requirement | Current evidence | Status |
 |---|---|---|
-| Typecheck, tests, build | Node 26; 24 files and 70 tests; ESM/DTS build | Passed |
+| Typecheck, tests, build | Node 26; 24 files and 80 tests; ESM/DTS build | Passed |
 | Channel connection and service | LaunchAgent running; `ws client ready` | Passed |
 | Claude Adapter protocol and permissions | Automated stdio tests; historical real Feishu run | Latest real Feishu regression pending |
-| Codex Adapter | Real local app-server smoke returned `OSCAR_CODEX_OK`; protocol tests | Real Feishu E2E pending |
-| Streaming card, tool/thinking, throttle | Renderer and presenter tests; historical screenshots | Latest real Feishu regression pending |
-| Stop and process escalation | Command integration plus SIGTERM/SIGKILL tests | Real Feishu stop pending |
+| Codex Adapter | Real local app-server smoke returned `OSCAR_CODEX_OK`; protocol tests; bootstrap failure terminates the child process | Real Feishu E2E pending |
+| Streaming card, tool/thinking, throttle | Renderer and presenter tests; successful tool output is compact; failed output remains bounded; CardKit failure cancels the invisible Agent run | Latest real Feishu regression pending |
+| Stop, shutdown and process escalation | Command integration plus SIGTERM/SIGKILL race tests; shutdown cancels runs and flushes all stores before disconnect | Real Feishu stop pending |
 | AskUserQuestion and approval | Bridge token/form integration tests | Real Feishu interaction pending |
 | Session concurrency and persistence | Same/different Session integration tests plus JSON reload tests | Real Feishu concurrency/restart pending |
-| Workspace selection and persistence | Command, path-policy, and JSON reload tests | Real Feishu command regression pending |
+| Workspace selection and persistence | Command, path-policy, JSON reload tests, and realpath revalidation immediately before every Agent start | Real Feishu command regression pending |
 
 P0 is accepted only when every pending real Feishu row has been exercised against the latest deployed build.
 

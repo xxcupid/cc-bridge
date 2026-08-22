@@ -20,7 +20,6 @@ export class LarkChannelGateway implements ChannelPort {
       appSecret: options.appSecret,
       ...(options.domain ? { domain: options.domain } : {}),
       source: 'oscar-lark-bridge',
-      includeRawEvent: true,
       resolveChatMode: true,
       respectProxyEnv: true,
       handshakeTimeoutMs: 8_000,
@@ -56,13 +55,15 @@ export class LarkChannelGateway implements ChannelPort {
 
   onCardAction(handler: (action: CardAction) => Promise<Record<string, unknown> | undefined>): void {
     this.channel.on('cardAction', async (action) => {
-      const raw = (action as typeof action & { raw?: { action?: { form_value?: Record<string, unknown> } } }).raw;
+      const normalized = action as typeof action & { action: typeof action.action & { formValue?: Record<string, unknown>; name?: string }; raw?: { action?: { form_value?: Record<string, unknown>; name?: string } } };
+      const raw = normalized.raw;
       return handler({
       messageId: action.messageId,
       chatId: action.chatId,
       operatorId: action.operator.openId,
       value: action.action.value,
-      ...(raw?.action?.form_value ? { formValue: raw.action.form_value } : {}),
+      ...(normalized.action.name ?? raw?.action?.name ? { actionName: normalized.action.name ?? raw?.action?.name } : {}),
+      ...(normalized.action.formValue ?? raw?.action?.form_value ? { formValue: normalized.action.formValue ?? raw?.action?.form_value } : {}),
     });
     });
   }

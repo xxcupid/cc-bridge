@@ -149,20 +149,28 @@ export class CodexAppServerAdapter implements AgentAdapter {
       if (!terminal) finish(cancelled ? { type: 'run.cancelled', ...(cancelReason ? { reason: cancelReason } : {}) } : { type: 'run.failed', message: 'Codex app-server exited unexpectedly' });
     });
 
-    const initialized = await rpc('initialize', { clientInfo: { name: 'oscar-lark-bridge', title: 'Oscar Lark Bridge', version: '0.1.0' }, capabilities: { experimentalApi: true } });
-    void initialized; write({ jsonrpc: '2.0', method: 'initialized', params: {} });
-    const threadParams = { cwd: request.cwd, approvalPolicy: request.permission.mode === 'default' ? 'on-request' : 'never', sandbox: SANDBOX[request.permission.maxAccess], experimentalRawEvents: false, persistExtendedHistory: Boolean(request.resumeId), ...(request.model ? { model: request.model } : {}) };
-    const thread = await rpc(request.resumeId ? 'thread/resume' : 'thread/start', request.resumeId ? { ...threadParams, threadId: request.resumeId } : threadParams);
-    const threadResult = record(thread);
-    threadId = text(record(threadResult?.thread)?.id) ?? '';
-    if (!threadId) throw new Error('Codex app-server returned an empty thread id');
-    modelProvider = text(threadResult?.modelProvider) ?? '';
-    const selectedModel = text(threadResult?.model) ?? request.model;
-    if (selectedModel) metrics = { ...metrics, model: qualifiedModel(modelProvider, selectedModel) };
-    events.push({ type: 'session.started', nativeSessionId: threadId });
-    const turn = await rpc('turn/start', { threadId, input: [{ type: 'text', text: request.prompt, text_elements: [] }], approvalPolicy: threadParams.approvalPolicy, ...(request.model ? { model: request.model } : {}) });
-    turnId = text(record(record(turn)?.turn)?.id) ?? '';
-    if (!turnId) throw new Error('Codex app-server returned an empty turn id');
+    try {
+      const initialized = await rpc('initialize', { clientInfo: { name: 'oscar-lark-bridge', title: 'Oscar Lark Bridge', version: '0.1.0' }, capabilities: { experimentalApi: true } });
+      void initialized; write({ jsonrpc: '2.0', method: 'initialized', params: {} });
+      const threadParams = { cwd: request.cwd, approvalPolicy: request.permission.mode === 'default' ? 'on-request' : 'never', sandbox: SANDBOX[request.permission.maxAccess], experimentalRawEvents: false, persistExtendedHistory: Boolean(request.resumeId), ...(request.model ? { model: request.model } : {}) };
+      const thread = await rpc(request.resumeId ? 'thread/resume' : 'thread/start', request.resumeId ? { ...threadParams, threadId: request.resumeId } : threadParams);
+      const threadResult = record(thread);
+      threadId = text(record(threadResult?.thread)?.id) ?? '';
+      if (!threadId) throw new Error('Codex app-server returned an empty thread id');
+      modelProvider = text(threadResult?.modelProvider) ?? '';
+      const selectedModel = text(threadResult?.model) ?? request.model;
+      if (selectedModel) metrics = { ...metrics, model: qualifiedModel(modelProvider, selectedModel) };
+      events.push({ type: 'session.started', nativeSessionId: threadId });
+      const turn = await rpc('turn/start', { threadId, input: [{ type: 'text', text: request.prompt, text_elements: [] }], approvalPolicy: threadParams.approvalPolicy, ...(request.model ? { model: request.model } : {}) });
+      turnId = text(record(record(turn)?.turn)?.id) ?? '';
+      if (!turnId) throw new Error('Codex app-server returned an empty turn id');
+    } catch (error) {
+      failAll(error instanceof Error ? error : new Error(String(error)));
+      lines.close();
+      events.end();
+      await terminateProcess(child, this.stopGraceMs);
+      throw error;
+    }
 
     return {
       events,

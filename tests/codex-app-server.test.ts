@@ -70,6 +70,19 @@ describe('CodexAppServerAdapter', () => {
     child.send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'run.completed' } });
   });
+
+  it('terminates the app-server when bootstrap fails', async () => {
+    const child = new FakeAppServer(['initialize']);
+    const adapter = new CodexAppServerAdapter({
+      requestTimeoutMs: 5,
+      stopGraceMs: 5,
+      spawnProcess: (() => child as unknown as ChildProcessWithoutNullStreams) as unknown as typeof spawn,
+    });
+
+    await expect(adapter.start({ runId: 'r1', sessionId: 's1', prompt: 'do it', cwd: '/tmp', permission: { mode: 'default', maxAccess: 'workspace' } }))
+      .rejects.toThrow('Codex app-server initialize timed out');
+    expect(child.signals).toContain('SIGTERM');
+  });
 });
 
 class FakeAppServer extends EventEmitter {
@@ -77,9 +90,11 @@ class FakeAppServer extends EventEmitter {
   messages: Array<Record<string, unknown>> = [];
   exitCode: number | null = null; signalCode: NodeJS.Signals | null = null;
   signals: NodeJS.Signals[] = [];
+  constructor(private readonly ignoredMethods: string[] = []) { super(); }
   stdin = new Writable({ write: (chunk, _encoding, callback) => {
     const message = JSON.parse(chunk.toString()) as Record<string, unknown>; this.messages.push(message);
     const id = message.id; const method = message.method;
+    if (typeof method === 'string' && this.ignoredMethods.includes(method)) { callback(); return; }
     if (id !== undefined && method === 'initialize') this.send({ jsonrpc: '2.0', id, result: { protocolVersion: '2' } });
     if (id !== undefined && method === 'thread/start') this.send({ jsonrpc: '2.0', id, result: { thread: { id: 'thread-1' }, cwd: '/tmp', model: 'test', modelProvider: 'openai' } });
     if (id !== undefined && method === 'thread/resume') this.send({ jsonrpc: '2.0', id, result: { thread: { id: 'thread-1' }, cwd: '/tmp', model: 'test', modelProvider: 'openai' } });

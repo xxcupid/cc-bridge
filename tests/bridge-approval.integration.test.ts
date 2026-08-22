@@ -63,7 +63,7 @@ describe('BridgeApplication approval flow', () => {
 
     const denied = await channel.emitAction({ messageId: 'card', chatId: 'c1', operatorId: 'u2', value: { action: 'answer', token }, formValue: { answer: 'B' } });
     expect(denied).toMatchObject({ toast: { type: 'warning' } });
-    const accepted = await channel.emitAction({ messageId: 'card', chatId: 'c1', operatorId: 'u1', value: { action: 'answer', token }, formValue: { answer: 'B' } });
+    const accepted = await channel.emitAction({ messageId: 'card', chatId: 'c1', operatorId: 'u1', value: undefined, actionName: `agent_question_submit_${token}`, formValue: { answer: 'B' } });
     expect(accepted).toMatchObject({ toast: { type: 'success' } });
     await running;
     expect(adapter.answers).toEqual([{ questionId: 'question-secret', answer: 'B' }]);

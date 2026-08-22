@@ -13,4 +13,9 @@ describe('ThrottledUpdater', () => {
     expect(values.at(-1)).toBe(2);
     vi.useRealTimers();
   });
+  it('surfaces a background sink failure through flushNow without an unhandled rejection', async () => {
+    const updater = new ThrottledUpdater<string>(0, async () => { throw new Error('sink failed'); });
+    updater.schedule('value');
+    await expect(updater.flushNow()).rejects.toThrow('sink failed');
+  });
 });

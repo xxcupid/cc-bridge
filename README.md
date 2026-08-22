@@ -85,7 +85,7 @@ node dist/cli.js status
 node dist/cli.js run
 ```
 
-Claude-only 模式下，`doctor` 只要求 Claude 可用，未选择的 Codex 显示为 `SKIP`。`status` 只显示 App ID 后六位，不打印 App Secret。
+`doctor` 会探测 Claude 和 Codex 两个本地 CLI；只把默认 Agent 作为启动必需项，未安装的非默认 Agent 显示为可选 `SKIP`，已安装则显示可选 `PASS`。`status` 只显示 App ID 后六位，不打印 App Secret。
 
 ## 多飞书应用与 Profile
 

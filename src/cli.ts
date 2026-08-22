@@ -72,10 +72,13 @@ withProfile(program.command('doctor').description('Validate one profile, workspa
   let config;
   try { config = loadRuntimeConfig(profileEnvironment(paths)); }
   catch (error) { console.error(`FAIL config: ${(error as Error).message}`); process.exitCode = 1; return; }
-  const selectedBinary = config.defaultAgent === 'claude' ? config.claudeBinary : config.codexBinary;
+  const [claudeAvailable, codexAvailable] = await Promise.all([
+    commandAvailable(config.claudeBinary),
+    commandAvailable(config.codexBinary),
+  ]);
   const checks: DoctorCheck[] = [
     { name: 'workspace', ok: (await resolveWorkspace(config.defaultWorkspace)).ok, required: true },
-    ...agentDoctorChecks(config.defaultAgent, await commandAvailable(selectedBinary)),
+    ...agentDoctorChecks(config.defaultAgent, { claude: claudeAvailable, codex: codexAvailable }),
     { name: 'app credentials', ok: Boolean(config.appId && config.appSecret), required: true },
   ];
   console.log(`profile: ${paths.profile}`);

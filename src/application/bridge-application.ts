@@ -9,6 +9,7 @@ import { CommandRouter } from './command-router.js';
 import { SessionStore } from '../session/session-store.js';
 import { WorkspaceStore } from '../workspace/workspace-store.js';
 import { ApprovalStore } from '../approval/approval-store.js';
+import { resolveWorkspace } from '../workspace/workspace-policy.js';
 
 export interface BridgeApplicationOptions {
   channel: ChannelPort;
@@ -53,7 +54,15 @@ export class BridgeApplication {
     const handles = [...this.activeRuns.values()].map((run) => run.handle);
     await Promise.allSettled(handles.map((handle) => handle.cancel('bridge is shutting down')));
     await Promise.allSettled([...this.inFlightMessages]);
-    await this.options.channel.disconnect();
+    try {
+      await Promise.all([
+        this.options.sessions.flush(),
+        this.options.workspaces.flush(),
+        this.options.approvals.flush(),
+      ]);
+    } finally {
+      await this.options.channel.disconnect();
+    }
   }
 
   private trackMessage(message: IncomingMessage): Promise<void> {
@@ -77,6 +86,18 @@ export class BridgeApplication {
       mode: this.options.permission.mode,
     });
     await this.locks.runExclusive(session.id, async () => {
+      const workspace = await resolveWorkspace(session.cwd);
+      if (!workspace.ok) {
+        await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
+        await this.options.channel.sendMarkdown(message.chatId, `当前 Workspace 已失效或不安全：${workspace.message}\n\n请使用 \`/cd <安全的绝对路径>\` 重新选择。`, {
+          replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
+        });
+        return;
+      }
+      if (workspace.path !== session.cwd) {
+        this.options.sessions.updateWorkspace(session.id, workspace.path);
+        this.options.workspaces.setScope(scope, workspace.path);
+      }
       const runId = randomUUID();
       let handle: AgentRunHandle;
       try {
@@ -84,7 +105,7 @@ export class BridgeApplication {
           runId,
           sessionId: session.id,
           prompt: message.content,
-          cwd: session.cwd,
+          cwd: workspace.path,
           ...(session.nativeSessionId ? { resumeId: session.nativeSessionId } : {}),
           permission: { mode: session.mode, maxAccess: this.options.permission.maxAccess },
         });
@@ -106,9 +127,18 @@ export class BridgeApplication {
         void handle.cancel(`run timed out after ${timeoutMs}ms`).catch(() => undefined);
       }, timeoutMs) : undefined;
       try {
-        await this.presenter.present(runId, scope, message, this.recordSessionEvents({
-          runId, sessionId: session.id, scope, operatorId: message.senderId, events: handle.events,
-        }));
+        try {
+          await this.presenter.present(runId, scope, message, this.recordSessionEvents({
+            runId, sessionId: session.id, scope, operatorId: message.senderId, events: handle.events,
+          }));
+        } catch {
+          await Promise.allSettled([
+            handle.cancel('card presentation failed'),
+            this.options.channel.sendMarkdown(message.chatId, '流式卡片更新失败，任务已安全停止。请稍后重试。', {
+              replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
+            }),
+          ]);
+        }
       } finally {
         if (timeout) clearTimeout(timeout);
         await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
@@ -152,8 +182,11 @@ export class BridgeApplication {
   }
 
   private async handleCardAction(action: CardAction): Promise<Record<string, unknown> | undefined> {
-    if (!action.value || typeof action.value !== 'object') return undefined;
-    const value = action.value as Record<string, unknown>;
+    const fallbackToken = action.actionName?.startsWith('agent_question_submit_') ? action.actionName.slice('agent_question_submit_'.length) : undefined;
+    const value = action.value && typeof action.value === 'object'
+      ? action.value as Record<string, unknown>
+      : fallbackToken ? { action: 'answer', token: fallbackToken } : undefined;
+    if (!value) return undefined;
     if (value.action === 'stop') {
       if (typeof value.scope !== 'string' || typeof value.runId !== 'string') return undefined;
       const active = [...this.activeRuns.values()].find((run) => run.scope === value.scope && run.runId === value.runId);

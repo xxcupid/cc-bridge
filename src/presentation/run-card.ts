@@ -7,12 +7,15 @@ import type { AgentEvent, RunMetrics } from '../domain/agent.js';
 
 export type CardRunStatus = 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 interface ToolStep { id: string; name: string; input?: unknown; output?: unknown; isError?: boolean; completed: boolean; startedAt: number; endedAt?: number; }
+type PendingInteraction =
+  | { kind: 'approval'; id: string; action: string; access: 'read-only' | 'workspace' | 'full'; detail?: string }
+  | { kind: 'question'; id: string; prompt: string; options?: string[] };
 
 export class RunCardState {
   readonly startedAt: number;
   status: CardRunStatus = 'running'; text = ''; thinking = ''; error = ''; nativeSessionId = '';
   metrics: RunMetrics = {}; tools: ToolStep[] = [];
-  pending?: { kind: 'approval' | 'question'; id: string; options?: string[] };
+  pending?: PendingInteraction;
   constructor(readonly runId: string, readonly scope: string, startedAt = Date.now()) { this.startedAt = startedAt; }
 
   apply(event: AgentEvent): void {
@@ -24,8 +27,17 @@ export class RunCardState {
       case 'tool.started': this.tools.push({ id: event.toolCallId, name: event.name, input: event.input, completed: false, startedAt: Date.now() }); break;
       case 'tool.completed': { const tool = this.tools.find((item) => item.id === event.toolCallId); if (tool) Object.assign(tool, { output: event.output, isError: event.isError, completed: true, endedAt: Date.now() }); break; }
       case 'metrics.updated': this.metrics = { ...this.metrics, ...event.metrics }; break;
-      case 'approval.requested': this.status = 'waiting'; this.pending = { kind: 'approval', id: event.token ?? event.requestId }; break;
-      case 'question.requested': this.status = 'waiting'; this.pending = { kind: 'question', id: event.token ?? event.questionId, options: event.options }; break;
+      case 'approval.requested': {
+        const meta = toolMeta(event.action);
+        const detail = toolDetail(event.details, meta.key);
+        this.status = 'waiting';
+        this.pending = {
+          kind: 'approval', id: event.token ?? event.requestId, action: event.action, access: event.access,
+          ...(detail ? { detail } : {}),
+        };
+        break;
+      }
+      case 'question.requested': this.status = 'waiting'; this.pending = { kind: 'question', id: event.token ?? event.questionId, prompt: event.prompt, options: event.options }; break;
       case 'run.completed': this.status = 'completed'; this.metrics = { ...this.metrics, ...event.metrics }; if (event.nativeSessionId) this.nativeSessionId = event.nativeSessionId; break;
       case 'run.failed': this.status = 'failed'; this.error = event.message; break;
       case 'run.cancelled': this.status = 'cancelled'; break;
@@ -42,9 +54,15 @@ export class RunCardState {
     elements.push({ tag: 'markdown', content: this.text || (this.error ? `**错误：** ${escapeMarkdown(this.error)}` : '正在思考…') });
     const footerText = footer(this.status, elapsed, this.metrics);
     elements.push({ tag: 'markdown', content: (this.status === 'running' || this.status === 'waiting') ? `${footerText} · 发送 \`/stop\` 可停止` : footerText, text_size: 'notation' });
-    if (this.pending?.kind === 'approval') elements.push(buttonRow([callbackButton('允许', { action: 'approve', approved: true, token: this.pending.id }, 'primary'), callbackButton('拒绝', { action: 'approve', approved: false, token: this.pending.id }, 'danger')]));
-    else if (this.pending?.kind === 'question' && this.pending.options?.length) elements.push(buttonRow(this.pending.options.slice(0, 5).map((o) => callbackButton(o, { action: 'answer', answer: o, token: this.pending!.id }))));
-    else if (this.pending?.kind === 'question') elements.push({ tag: 'form', name: 'agent_question_form', elements: [{ tag: 'input', name: 'answer', required: true, placeholder: { tag: 'plain_text', content: '请输入回答' } }, { tag: 'button', name: 'agent_question_submit', text: { tag: 'plain_text', content: '提交回答' }, type: 'primary', form_action_type: 'submit', value: { action: 'answer', token: this.pending.id } }] });
+    if (this.pending?.kind === 'approval') {
+      elements.push(interactionPrompt(`⚠️ **需要授权**\n\nAgent 请求执行 **${escapeMarkdown(this.pending.action)}** · 访问范围 \`${accessLabel(this.pending.access)}\`${this.pending.detail ? `\n\n\`${escapeMarkdown(this.pending.detail)}\`` : ''}`));
+      elements.push(buttonRow([callbackButton('允许', { action: 'approve', approved: true, token: this.pending.id }, 'primary'), callbackButton('拒绝', { action: 'approve', approved: false, token: this.pending.id }, 'danger')]));
+    } else if (this.pending?.kind === 'question' && this.pending.options?.length) {
+      elements.push(interactionPrompt(`❓ **需要你的回答**\n\n${escapeMarkdown(this.pending.prompt)}`));
+      elements.push(buttonRow(this.pending.options.slice(0, 5).map((o) => callbackButton(o, { action: 'answer', answer: o, token: this.pending!.id }))));
+    } else if (this.pending?.kind === 'question') {
+      elements.push({ tag: 'form', name: 'agent_question_form', elements: [interactionPrompt(`❓ **需要你的回答**\n\n${escapeMarkdown(this.pending.prompt)}`), { tag: 'input', name: 'answer', required: true, placeholder: { tag: 'plain_text', content: '请输入回答' } }, { tag: 'button', name: `agent_question_submit_${this.pending.id}`, text: { tag: 'plain_text', content: '提交回答' }, type: 'primary', form_action_type: 'submit', value: { action: 'answer', token: this.pending.id } }] });
+    }
     const summary = this.text.replace(/[*_`#>[\]()~]/g, '').trim().slice(0, 120);
     return { schema: '2.0', config: { wide_screen_mode: true, update_multi: true, streaming_mode: this.status === 'running', locales: ['zh_cn', 'en_us'], ...(summary ? { summary: { content: summary } } : {}) }, body: { elements } };
   }
@@ -68,10 +86,18 @@ function toolElements(tool: ToolStep): object[] {
   const result: object[] = [{ tag: 'div', icon: { tag: 'standard_icon', token: meta.icon, color: 'grey' }, text: { tag: 'lark_md', content: `**${meta.title}${duration}** · <font color='${status.color}'>${status.label}</font>`, text_size: 'notation' } }];
   const detail = toolDetail(tool.input, meta.key);
   if (detail) result.push({ tag: 'div', margin: '0px 0px 0px 22px', text: { tag: 'plain_text', content: detail, text_color: 'grey', text_size: 'notation' } });
+  const error = tool.isError ? toolErrorDetail(tool.output) : undefined;
+  if (error) result.push({ tag: 'div', margin: '0px 0px 0px 22px', text: { tag: 'lark_md', content: `**错误详情**\n\n\`\`\`\n${error}\n\`\`\``, text_size: 'notation' } });
   return result;
 }
 function toolMeta(name: string): { title: string; icon: string; key: string } { const n = name.toLowerCase(); if (n.includes('skill')) return { title: 'Load skill', icon: 'app-default_outlined', key: 'skill' }; if (n.includes('read')) return { title: 'Read', icon: 'file-link-text_outlined', key: 'path' }; if (n.includes('write') || n.includes('edit') || n.includes('patch')) return { title: 'Edit', icon: 'edit_outlined', key: 'path' }; if (n.includes('grep')) return { title: 'Search text', icon: 'doc-search_outlined', key: 'pattern' }; if (n.includes('glob')) return { title: 'Search files', icon: 'folder_outlined', key: 'pattern' }; if (n.includes('websearch') || n.includes('search')) return { title: 'Search web', icon: 'search_outlined', key: 'query' }; if (n.includes('bash') || n.includes('command') || n.includes('terminal')) return { title: 'Run command', icon: 'setting_outlined', key: 'command' }; return { title: name, icon: 'setting-inter_outlined', key: 'generic' }; }
 function toolDetail(input: unknown, kind: string): string | undefined { if (!input || typeof input !== 'object') return typeof input === 'string' ? input.slice(0, 300) : undefined; const r = input as Record<string, unknown>; const keys = kind === 'path' ? ['file_path', 'path', 'file'] : kind === 'pattern' ? ['pattern'] : kind === 'query' ? ['query', 'q'] : kind === 'command' ? ['command', 'description'] : kind === 'skill' ? ['skill', 'name'] : []; for (const key of keys) if (typeof r[key] === 'string') { const value = r[key] as string; return kind === 'path' ? (value.split('/').filter(Boolean).at(-1) ?? value) : value.slice(0, 300); } return undefined; }
+function toolErrorDetail(output: unknown): string | undefined {
+  const value = typeof output === 'string' ? output : output == null ? '' : safeJson(output);
+  const trimmed = value.trim();
+  return trimmed ? trimmed.replaceAll('```', '~~~').slice(0, 2_000) : undefined;
+}
+function safeJson(value: unknown): string { try { return JSON.stringify(value, null, 2); } catch { return String(value); } }
 function collapsible(title: string, content: string, expanded: boolean): object { return { tag: 'collapsible_panel', expanded, header: { title: { tag: 'plain_text', content: title, text_color: 'grey', text_size: 'notation' }, vertical_align: 'center', icon: { tag: 'standard_icon', token: 'down-small-ccm_outlined', color: 'grey', size: '16px 16px' }, icon_position: 'right', icon_expanded_angle: -180 }, border: { color: 'grey', corner_radius: '5px' }, padding: '8px 8px 8px 8px', elements: [{ tag: 'markdown', content, text_size: 'notation' }] }; }
 function footer(status: CardRunStatus, elapsed: number, m: RunMetrics): string {
   const labels = { running: '运行中', waiting: '等待用户操作', completed: '已完成', failed: '失败', cancelled: '已停止' };
@@ -93,4 +119,6 @@ function compact(n: number): string { const abs = Math.abs(n); if (abs >= 1_000_
 function formatElapsed(ms: number): string { const seconds = ms / 1_000; return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`; }
 function callbackButton(label: string, value: Record<string, unknown>, type = 'default'): object { return { tag: 'button', text: { tag: 'plain_text', content: label }, type, behaviors: [{ type: 'callback', value }] }; }
 function buttonRow(buttons: object[]): object { return { tag: 'column_set', flex_mode: 'flow', horizontal_spacing: 'small', columns: buttons.map((button) => ({ tag: 'column', width: 'auto', elements: [button] })) }; }
+function interactionPrompt(content: string): object { return { tag: 'markdown', content, text_size: 'notation' }; }
+function accessLabel(access: 'read-only' | 'workspace' | 'full'): string { return access === 'read-only' ? '只读' : access === 'workspace' ? '当前工作区' : '完整访问'; }
 function escapeMarkdown(value: string): string { return value.replaceAll('`', '\\`'); }

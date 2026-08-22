@@ -46,9 +46,11 @@ Codex 生产路径使用 `codex app-server --listen stdio://`。Adapter 完成 i
 
 Claude 工具按最低所需访问级别分类：Read/Glob/Grep/WebSearch/WebFetch 为 `read-only`，Edit/Write/NotebookEdit/MultiEdit 为 `workspace`，Bash 和未识别工具按 `full` 处理。`yolo` 不是无条件 bypass：超过 `maxAccess` 的 control request 自动拒绝。飞书卡片回调必须同时匹配当前 scope、runId 和 requestId，旧 Run 的按钮返回过期提示。
 
+审批卡片展示动作名称、访问级别和经过字段白名单与长度限制的必要摘要，AskUserQuestion 卡片展示实际问题正文；这些内容只用于当前聊天中的决策界面。按钮仍只携带不透明 token，不携带原始 requestId、scope 或完整参数。成功工具输出默认不进入卡片，失败工具保留最多 2000 字符的诊断摘要。
+
 ## 6. Workspace
 
-本地目录在使用前执行 realpath、存在性、目录类型及危险根目录校验。命名 Workspace 只是安全路径的别名。Workspace 决定 Agent cwd，但不是安全沙箱；Claude/Codex 的权限参数仍必须与本项目权限决策一致。
+本地目录在选择时以及每次真正启动 Agent 前执行 realpath、存在性、目录类型及危险根目录校验。重复校验用于防止持久化后目录被删除，或被替换为指向危险根目录的符号链接。命名 Workspace 只是安全路径的别名。Workspace 决定 Agent cwd，但不是安全沙箱；Claude/Codex 的权限参数仍必须与本项目权限决策一致。
 
 ## 7. 持久化
 
@@ -72,7 +74,9 @@ LaunchAgent 使用 `KeepAlive.SuccessfulExit=false`：异常退出自动拉起�
 
 每个进程启动前同时获取 Profile 锁和 App ID 哈希锁。同一 Profile 不能被前台与后台重复启动，同一飞书 App ID 也不能被两个 Profile 建立竞争性长连接。锁文件只保存 PID、Profile、App ID 后缀和随机所有权 token；进程退出时按 token 删除，异常退出后仅在原 PID 不存在时回收。
 
-服务停止时先拒绝新消息，并取消所有活动 Agent，再断开飞书连接。单次任务默认 30 分钟超时，可通过 `OSCAR_LARK_RUN_TIMEOUT_MS` 调整或设为 `0` 禁用。取消最终由各 Adapter 的进程终止器执行：先发 SIGTERM，宽限期结束后仍未退出则升级为 SIGKILL。
+服务停止时先拒绝新消息，取消所有活动 Agent，等待在途消息和 Session/Workspace/Approval 原子写入完成，再断开飞书连接。单次任务默认 30 分钟超时，可通过 `OSCAR_LARK_RUN_TIMEOUT_MS` 调整或设为 `0` 禁用。取消最终由各 Adapter 的进程终止器执行：先注册退出监听并发送 SIGTERM，宽限期结束后仍未退出则升级为 SIGKILL。Codex 在 initialize、thread 或 turn 启动阶段失败时也走同一回收路径，避免孤儿 app-server。
+
+CardKit 创建或更新失败时，Bridge 不继续留下不可见的后台任务：对应 Agent Run 会被取消，工作表情被清理，并尝试发送不包含 Prompt、审批参数或底层异常对象的通用失败提示。
 
 ## 10. 参考实现与来源记录
 
