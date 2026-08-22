@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- Complete Claude and Codex card footers with the actual model, input/output and cache usage, cache hit rate, and context-window utilization when the underlying runtime reports them.
 - Remove the working reaction when an Agent fails during startup.
 - Route `/stop` to the active Agent cancellation path instead of treating it as an Agent prompt.
 - Enforce `maxAccess` before Claude approvals in every permission mode and auto-allow default read-only control requests.

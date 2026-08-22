@@ -1,7 +1,17 @@
 export type AgentId = 'claude' | 'codex';
 export type AccessLevel = 'read-only' | 'workspace' | 'full';
 export type PermissionMode = 'default' | 'yolo';
-export interface RunMetrics { model?: string; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; contextTokens?: number; }
+export interface RunMetrics {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** Tokens currently occupying the model context window. */
+  totalTokens?: number;
+  /** Maximum model context window size. */
+  contextTokens?: number;
+}
 
 export interface AgentRunRequest {
   runId: string;
@@ -19,6 +29,7 @@ export type AgentEvent =
   | { type: 'thinking.delta'; text: string }
   | { type: 'tool.started'; toolCallId: string; name: string; input?: unknown }
   | { type: 'tool.completed'; toolCallId: string; output?: unknown; isError: boolean }
+  | { type: 'metrics.updated'; metrics: RunMetrics }
   | { type: 'approval.requested'; requestId: string; action: string; access: AccessLevel; details?: unknown; token?: string }
   | { type: 'question.requested'; questionId: string; prompt: string; options?: string[]; token?: string }
   | { type: 'run.completed'; nativeSessionId?: string; metrics?: RunMetrics }

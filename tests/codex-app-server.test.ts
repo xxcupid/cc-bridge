@@ -21,10 +21,16 @@ describe('CodexAppServerAdapter', () => {
     child.send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { itemId: 'a1', delta: 'do' } });
     child.send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { itemId: 'a1', delta: 'ne' } });
     child.send({ jsonrpc: '2.0', method: 'item/completed', params: { item: { id: 'a1', type: 'agentMessage', text: 'done' } } });
+    child.send({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId: 'thread-1', turnId: 'turn-1', tokenUsage: {
+      total: { totalTokens: 400, inputTokens: 320, cachedInputTokens: 80, cacheWriteInputTokens: 0, outputTokens: 80, reasoningOutputTokens: 20 },
+      last: { totalTokens: 250, inputTokens: 200, cachedInputTokens: 50, cacheWriteInputTokens: 10, outputTokens: 50, reasoningOutputTokens: 10 },
+      modelContextWindow: 1_000,
+    } } });
     child.send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'text.delta', text: 'do' } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'text.delta', text: 'ne' } });
-    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'run.completed', nativeSessionId: 'thread-1' } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'metrics.updated', metrics: { model: 'openai/test', inputTokens: 140, outputTokens: 50, cacheReadTokens: 50, cacheWriteTokens: 10, totalTokens: 250, contextTokens: 1_000 } } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'run.completed', nativeSessionId: 'thread-1', metrics: { model: 'openai/test', totalTokens: 250 } } });
     await eventually(() => child.signals.includes('SIGTERM'));
   });
 
@@ -75,8 +81,8 @@ class FakeAppServer extends EventEmitter {
     const message = JSON.parse(chunk.toString()) as Record<string, unknown>; this.messages.push(message);
     const id = message.id; const method = message.method;
     if (id !== undefined && method === 'initialize') this.send({ jsonrpc: '2.0', id, result: { protocolVersion: '2' } });
-    if (id !== undefined && method === 'thread/start') this.send({ jsonrpc: '2.0', id, result: { thread: { id: 'thread-1' }, cwd: '/tmp', model: 'test' } });
-    if (id !== undefined && method === 'thread/resume') this.send({ jsonrpc: '2.0', id, result: { thread: { id: 'thread-1' }, cwd: '/tmp', model: 'test' } });
+    if (id !== undefined && method === 'thread/start') this.send({ jsonrpc: '2.0', id, result: { thread: { id: 'thread-1' }, cwd: '/tmp', model: 'test', modelProvider: 'openai' } });
+    if (id !== undefined && method === 'thread/resume') this.send({ jsonrpc: '2.0', id, result: { thread: { id: 'thread-1' }, cwd: '/tmp', model: 'test', modelProvider: 'openai' } });
     if (id !== undefined && method === 'turn/start') this.send({ jsonrpc: '2.0', id, result: { turn: { id: 'turn-1' } } });
     if (id !== undefined && method === 'turn/interrupt') this.send({ jsonrpc: '2.0', id, result: {} });
     callback();

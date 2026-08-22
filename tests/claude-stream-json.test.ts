@@ -20,11 +20,26 @@ describe('translateClaudeEvent', () => {
     ]);
   });
 
+  it('captures the latest root assistant context usage without counting subagent messages', () => {
+    expect(translateClaudeEvent({ type: 'assistant', parent_tool_use_id: null, message: {
+      model: 'claude-sonnet-4-6',
+      usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 800, cache_creation_input_tokens: 80 },
+      content: [{ type: 'text', text: 'answer' }],
+    } })).toEqual([
+      { type: 'text.delta', text: 'answer' },
+      { type: 'metrics.updated', metrics: { model: 'claude-sonnet-4-6', totalTokens: 1_000 } },
+    ]);
+    expect(translateClaudeEvent({ type: 'assistant', parent_tool_use_id: 'subagent', message: {
+      model: 'claude-haiku', usage: { input_tokens: 10 }, content: [],
+    } })).toEqual([]);
+  });
+
   it('translates successful and failed results', () => {
     expect(translateClaudeEvent({ type: 'result', session_id: 'abc' })).toEqual([
       { type: 'run.completed', nativeSessionId: 'abc', metrics: {} },
     ]);
-    expect(translateClaudeEvent({ type: 'result', session_id: 'abc', usage: { input_tokens: 71, output_tokens: 161, cache_read_input_tokens: 40000 }, model_usage: { 'claude-opus': {} } })[0]).toMatchObject({ metrics: { model: 'claude-opus', inputTokens: 71, outputTokens: 161, cacheReadTokens: 40000 } });
+    expect(translateClaudeEvent({ type: 'result', session_id: 'abc', usage: { input_tokens: 71, output_tokens: 161, cache_read_input_tokens: 40000 }, modelUsage: { 'claude-opus': { contextWindow: 1_000_000 } } })[0]).toMatchObject({ metrics: { model: 'claude-opus', inputTokens: 71, outputTokens: 161, cacheReadTokens: 40000, contextTokens: 1_000_000 } });
+    expect(translateClaudeEvent({ type: 'result', session_id: 'legacy', model_usage: { 'legacy-model': { context_window: 200_000 } } })[0]).toMatchObject({ metrics: { model: 'legacy-model', contextTokens: 200_000 } });
     expect(translateClaudeEvent({ type: 'result', is_error: true, result: 'bad' })).toEqual([
       { type: 'run.failed', message: 'bad' },
     ]);

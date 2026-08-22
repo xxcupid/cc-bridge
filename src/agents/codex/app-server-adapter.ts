@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import spawn from 'cross-spawn';
-import type { AccessLevel, AgentAdapter, AgentEvent, AgentRunHandle, AgentRunRequest } from '../../domain/agent.js';
+import type { AccessLevel, AgentAdapter, AgentEvent, AgentRunHandle, AgentRunRequest, RunMetrics } from '../../domain/agent.js';
 import { decidePermission } from '../../domain/permission.js';
 import { AsyncEventQueue } from '../shared/async-event-queue.js';
 import { terminateProcess } from '../shared/terminate-process.js';
@@ -34,6 +34,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     const streamedTextItems = new Set<string>();
     const streamedReasoningItems = new Set<string>();
     let nextId = 1; let threadId = ''; let turnId = ''; let terminal = false; let cancelled = false; let cancelReason: string | undefined;
+    let metrics: RunMetrics = {}; let modelProvider = '';
     child.stderr.resume();
 
     const write = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -106,11 +107,35 @@ export class CodexAppServerAdapter implements AgentAdapter {
       } else if (method === 'item/reasoning/summaryTextDelta' || method === 'item/reasoning/textDelta' || method === 'item/plan/delta') {
         const value = text(params.delta); const id = text(params.itemId) ?? text(params.item_id) ?? 'reasoning';
         if (value) { streamedReasoningItems.add(id); events.push({ type: 'thinking.delta', text: value }); }
+      } else if (method === 'thread/tokenUsage/updated') {
+        if (!belongsToCurrentTurn(params, threadId, turnId)) return;
+        const tokenUsage = record(params.tokenUsage); const last = record(tokenUsage?.last);
+        if (!last) return;
+        const input = numeric(last.inputTokens); const cached = numeric(last.cachedInputTokens); const cacheWrite = numeric(last.cacheWriteInputTokens);
+        metrics = {
+          ...metrics,
+          ...(input != null ? { inputTokens: Math.max(0, input - (cached ?? 0) - (cacheWrite ?? 0)) } : {}),
+          ...(numeric(last.outputTokens) != null ? { outputTokens: numeric(last.outputTokens) } : {}),
+          ...(cached != null ? { cacheReadTokens: cached } : {}),
+          ...(cacheWrite != null ? { cacheWriteTokens: cacheWrite } : {}),
+          ...(numeric(last.totalTokens) != null ? { totalTokens: numeric(last.totalTokens) } : {}),
+          ...(numeric(tokenUsage?.modelContextWindow) != null ? { contextTokens: numeric(tokenUsage?.modelContextWindow) } : {}),
+        };
+        events.push({ type: 'metrics.updated', metrics: { ...metrics } });
+      } else if (method === 'thread/settings/updated') {
+        if (text(params.threadId) && text(params.threadId) !== threadId) return;
+        const settings = record(params.threadSettings); const model = text(settings?.model);
+        modelProvider = text(settings?.modelProvider) ?? modelProvider;
+        if (model) { metrics = { ...metrics, model: qualifiedModel(modelProvider, model) }; events.push({ type: 'metrics.updated', metrics: { model: metrics.model } }); }
+      } else if (method === 'model/rerouted') {
+        if (!belongsToCurrentTurn(params, threadId, turnId)) return;
+        const model = text(params.toModel);
+        if (model) { metrics = { ...metrics, model: qualifiedModel(modelProvider, model) }; events.push({ type: 'metrics.updated', metrics: { model: metrics.model } }); }
       } else if (method === 'turn/completed') {
         const turn = record(params.turn); const status = text(turn?.status);
         if (status === 'failed') finish({ type: 'run.failed', message: text(record(turn?.error)?.message) ?? 'Codex turn failed' });
         else if (status === 'interrupted' || cancelled) finish({ type: 'run.cancelled', ...(cancelReason ? { reason: cancelReason } : {}) });
-        else finish({ type: 'run.completed', nativeSessionId: threadId });
+        else finish({ type: 'run.completed', nativeSessionId: threadId, metrics });
         void terminateProcess(child, this.stopGraceMs);
       } else if (method === 'error') {
         finish({ type: 'run.failed', message: text(params.message) ?? 'Codex app-server error' });
@@ -128,8 +153,12 @@ export class CodexAppServerAdapter implements AgentAdapter {
     void initialized; write({ jsonrpc: '2.0', method: 'initialized', params: {} });
     const threadParams = { cwd: request.cwd, approvalPolicy: request.permission.mode === 'default' ? 'on-request' : 'never', sandbox: SANDBOX[request.permission.maxAccess], experimentalRawEvents: false, persistExtendedHistory: Boolean(request.resumeId), ...(request.model ? { model: request.model } : {}) };
     const thread = await rpc(request.resumeId ? 'thread/resume' : 'thread/start', request.resumeId ? { ...threadParams, threadId: request.resumeId } : threadParams);
-    threadId = text(record(record(thread)?.thread)?.id) ?? '';
+    const threadResult = record(thread);
+    threadId = text(record(threadResult?.thread)?.id) ?? '';
     if (!threadId) throw new Error('Codex app-server returned an empty thread id');
+    modelProvider = text(threadResult?.modelProvider) ?? '';
+    const selectedModel = text(threadResult?.model) ?? request.model;
+    if (selectedModel) metrics = { ...metrics, model: qualifiedModel(modelProvider, selectedModel) };
     events.push({ type: 'session.started', nativeSessionId: threadId });
     const turn = await rpc('turn/start', { threadId, input: [{ type: 'text', text: request.prompt, text_elements: [] }], approvalPolicy: threadParams.approvalPolicy, ...(request.model ? { model: request.model } : {}) });
     turnId = text(record(record(turn)?.turn)?.id) ?? '';
@@ -168,6 +197,12 @@ function redactApprovalDetails(method: string, params: Record<string, unknown>):
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function record(value: unknown): Record<string, unknown> | undefined { return isRecord(value) ? value : undefined; }
 function text(value: unknown): string | undefined { return typeof value === 'string' ? value : undefined; }
+function numeric(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : undefined; }
+function qualifiedModel(provider: string, model: string): string { return provider && !model.includes('/') ? `${provider}/${model}` : model; }
+function belongsToCurrentTurn(params: Record<string, unknown>, threadId: string, turnId: string): boolean {
+  const eventThreadId = text(params.threadId); const eventTurnId = text(params.turnId);
+  return (!eventThreadId || eventThreadId === threadId) && (!eventTurnId || !turnId || eventTurnId === turnId);
+}
 function extractText(value: unknown): string | undefined {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) { const joined = value.map((item) => typeof item === 'string' ? item : text(record(item)?.text) ?? '').filter(Boolean).join('\n'); return joined || undefined; }

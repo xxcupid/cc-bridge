@@ -16,16 +16,17 @@ export class RunCardState {
   constructor(readonly runId: string, readonly scope: string, startedAt = Date.now()) { this.startedAt = startedAt; }
 
   apply(event: AgentEvent): void {
-    if (!['approval.requested', 'question.requested', 'session.started'].includes(event.type)) { this.pending = undefined; if (this.status === 'waiting') this.status = 'running'; }
+    if (!['approval.requested', 'question.requested', 'session.started', 'metrics.updated'].includes(event.type)) { this.pending = undefined; if (this.status === 'waiting') this.status = 'running'; }
     switch (event.type) {
       case 'session.started': this.nativeSessionId = event.nativeSessionId; break;
       case 'text.delta': this.text += event.text; break;
       case 'thinking.delta': this.thinking += event.text; break;
       case 'tool.started': this.tools.push({ id: event.toolCallId, name: event.name, input: event.input, completed: false, startedAt: Date.now() }); break;
       case 'tool.completed': { const tool = this.tools.find((item) => item.id === event.toolCallId); if (tool) Object.assign(tool, { output: event.output, isError: event.isError, completed: true, endedAt: Date.now() }); break; }
+      case 'metrics.updated': this.metrics = { ...this.metrics, ...event.metrics }; break;
       case 'approval.requested': this.status = 'waiting'; this.pending = { kind: 'approval', id: event.token ?? event.requestId }; break;
       case 'question.requested': this.status = 'waiting'; this.pending = { kind: 'question', id: event.token ?? event.questionId, options: event.options }; break;
-      case 'run.completed': this.status = 'completed'; this.metrics = event.metrics ?? {}; if (event.nativeSessionId) this.nativeSessionId = event.nativeSessionId; break;
+      case 'run.completed': this.status = 'completed'; this.metrics = { ...this.metrics, ...event.metrics }; if (event.nativeSessionId) this.nativeSessionId = event.nativeSessionId; break;
       case 'run.failed': this.status = 'failed'; this.error = event.message; break;
       case 'run.cancelled': this.status = 'cancelled'; break;
     }
@@ -72,8 +73,23 @@ function toolElements(tool: ToolStep): object[] {
 function toolMeta(name: string): { title: string; icon: string; key: string } { const n = name.toLowerCase(); if (n.includes('skill')) return { title: 'Load skill', icon: 'app-default_outlined', key: 'skill' }; if (n.includes('read')) return { title: 'Read', icon: 'file-link-text_outlined', key: 'path' }; if (n.includes('write') || n.includes('edit') || n.includes('patch')) return { title: 'Edit', icon: 'edit_outlined', key: 'path' }; if (n.includes('grep')) return { title: 'Search text', icon: 'doc-search_outlined', key: 'pattern' }; if (n.includes('glob')) return { title: 'Search files', icon: 'folder_outlined', key: 'pattern' }; if (n.includes('websearch') || n.includes('search')) return { title: 'Search web', icon: 'search_outlined', key: 'query' }; if (n.includes('bash') || n.includes('command') || n.includes('terminal')) return { title: 'Run command', icon: 'setting_outlined', key: 'command' }; return { title: name, icon: 'setting-inter_outlined', key: 'generic' }; }
 function toolDetail(input: unknown, kind: string): string | undefined { if (!input || typeof input !== 'object') return typeof input === 'string' ? input.slice(0, 300) : undefined; const r = input as Record<string, unknown>; const keys = kind === 'path' ? ['file_path', 'path', 'file'] : kind === 'pattern' ? ['pattern'] : kind === 'query' ? ['query', 'q'] : kind === 'command' ? ['command', 'description'] : kind === 'skill' ? ['skill', 'name'] : []; for (const key of keys) if (typeof r[key] === 'string') { const value = r[key] as string; return kind === 'path' ? (value.split('/').filter(Boolean).at(-1) ?? value) : value.slice(0, 300); } return undefined; }
 function collapsible(title: string, content: string, expanded: boolean): object { return { tag: 'collapsible_panel', expanded, header: { title: { tag: 'plain_text', content: title, text_color: 'grey', text_size: 'notation' }, vertical_align: 'center', icon: { tag: 'standard_icon', token: 'down-small-ccm_outlined', color: 'grey', size: '16px 16px' }, icon_position: 'right', icon_expanded_angle: -180 }, border: { color: 'grey', corner_radius: '5px' }, padding: '8px 8px 8px 8px', elements: [{ tag: 'markdown', content, text_size: 'notation' }] }; }
-function footer(status: CardRunStatus, elapsed: number, m: RunMetrics): string { const labels = { running: '运行中', waiting: '等待用户操作', completed: '已完成', failed: '失败', cancelled: '已停止' }; const first = [labels[status], `耗时 ${elapsed.toFixed(1)}s`, m.model].filter(Boolean).join(' · '); const detail: string[] = []; if (m.inputTokens != null && m.outputTokens != null) detail.push(`↑ ${compact(m.inputTokens)} ↓ ${compact(m.outputTokens)}`); if (m.cacheReadTokens != null || m.cacheWriteTokens != null) detail.push(`缓存 ${compact(m.cacheReadTokens ?? 0)}/${compact(m.cacheWriteTokens ?? 0)}`); if (m.contextTokens != null) detail.push(`上下文 ${compact(m.contextTokens)}`); return detail.length ? `${first}\n${detail.join(' · ')}` : first; }
-function compact(n: number): string { return n >= 1_000 ? `${(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n); }
+function footer(status: CardRunStatus, elapsed: number, m: RunMetrics): string {
+  const labels = { running: '运行中', waiting: '等待用户操作', completed: '已完成', failed: '失败', cancelled: '已停止' };
+  const first = [labels[status], `耗时 ${formatElapsed(elapsed * 1_000)}`, m.model].filter(Boolean).join(' · ');
+  const detail: string[] = [];
+  if (m.inputTokens != null && m.outputTokens != null) detail.push(`↑ ${compact(m.inputTokens)} ↓ ${compact(m.outputTokens)}`);
+  if (m.cacheReadTokens != null || m.cacheWriteTokens != null) {
+    const read = Math.max(0, m.cacheReadTokens ?? 0); const write = Math.max(0, m.cacheWriteTokens ?? 0); const input = Math.max(0, m.inputTokens ?? 0);
+    const denominator = read + write + input; const hit = denominator > 0 ? Math.round((read / denominator) * 100) : 0;
+    detail.push(`缓存 ${compact(read)}/${compact(write)} (${hit}%)`);
+  }
+  if (m.totalTokens != null && m.contextTokens != null) {
+    const total = Math.max(0, m.totalTokens); const context = Math.max(0, m.contextTokens); const used = context > 0 ? Math.round((total / context) * 100) : 0;
+    detail.push(`上下文 ${compact(total)}/${compact(context)} (${used}%)`);
+  }
+  return detail.length ? `${first}\n${detail.join(' · ')}` : first;
+}
+function compact(n: number): string { const abs = Math.abs(n); if (abs >= 1_000_000) { const m = n / 1_000_000; return Math.abs(m) >= 100 ? `${Math.round(m)}m` : `${m.toFixed(1)}m`; } if (abs >= 1_000) { const k = n / 1_000; return Math.abs(k) >= 100 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`; } return String(Math.round(n)); }
 function formatElapsed(ms: number): string { const seconds = ms / 1_000; return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`; }
 function callbackButton(label: string, value: Record<string, unknown>, type = 'default'): object { return { tag: 'button', text: { tag: 'plain_text', content: label }, type, behaviors: [{ type: 'callback', value }] }; }
 function buttonRow(buttons: object[]): object { return { tag: 'column_set', flex_mode: 'flow', horizontal_spacing: 'small', columns: buttons.map((button) => ({ tag: 'column', width: 'auto', elements: [button] })) }; }

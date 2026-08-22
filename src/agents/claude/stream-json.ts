@@ -19,17 +19,31 @@ interface ContentBlock {
   is_error?: boolean;
 }
 
+interface ClaudeUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+interface ClaudeModelUsage {
+  contextWindow?: number;
+  context_window?: number;
+}
+
 interface ClaudeEvent {
   type?: string;
   subtype?: string;
   session_id?: string;
   is_error?: boolean;
   result?: string;
-  message?: { content?: ContentBlock[] };
+  message?: { content?: ContentBlock[]; model?: string; usage?: ClaudeUsage };
+  parent_tool_use_id?: string | null;
   request_id?: string;
   request?: { subtype?: string; tool_name?: string; input?: Record<string, unknown> };
-  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
-  model_usage?: Record<string, unknown>;
+  usage?: ClaudeUsage;
+  modelUsage?: Record<string, ClaudeModelUsage>;
+  model_usage?: Record<string, ClaudeModelUsage>;
 }
 
 export function translateClaudeEvent(raw: unknown): AgentEvent[] {
@@ -41,7 +55,7 @@ export function translateClaudeEvent(raw: unknown): AgentEvent[] {
   }
 
   if (event.type === 'assistant') {
-    return (event.message?.content ?? []).flatMap((block): AgentEvent[] => {
+    const translated = (event.message?.content ?? []).flatMap((block): AgentEvent[] => {
       if (block.type === 'text' && block.text) return [{ type: 'text.delta', text: block.text }];
       if (block.type === 'thinking' && block.thinking) {
         return [{ type: 'thinking.delta', text: block.thinking }];
@@ -51,6 +65,15 @@ export function translateClaudeEvent(raw: unknown): AgentEvent[] {
       }
       return [];
     });
+    if (!event.parent_tool_use_id && event.message?.usage) {
+      const usage = event.message.usage;
+      const totalTokens = sumDefined(usage.input_tokens, usage.output_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens);
+      translated.push({ type: 'metrics.updated', metrics: {
+        ...(event.message.model ? { model: event.message.model } : {}),
+        ...(totalTokens != null ? { totalTokens } : {}),
+      } });
+    }
+    return translated;
   }
 
   if (event.type === 'user') {
@@ -69,7 +92,10 @@ export function translateClaudeEvent(raw: unknown): AgentEvent[] {
     if (event.is_error) {
       return [{ type: 'run.failed', message: event.result ?? 'Claude Code returned an error result' }];
     }
-    const model = event.model_usage ? Object.keys(event.model_usage)[0] : undefined;
+    const modelUsage = event.modelUsage ?? event.model_usage;
+    const modelEntry = modelUsage ? Object.entries(modelUsage)[0] : undefined;
+    const model = modelEntry?.[0];
+    const contextWindow = number(modelEntry?.[1]?.contextWindow) ?? number(modelEntry?.[1]?.context_window);
     const usage = event.usage;
     return [{ type: 'run.completed', nativeSessionId: event.session_id, metrics: {
       ...(model ? { model } : {}),
@@ -77,6 +103,7 @@ export function translateClaudeEvent(raw: unknown): AgentEvent[] {
       ...(usage?.output_tokens != null ? { outputTokens: usage.output_tokens } : {}),
       ...(usage?.cache_read_input_tokens != null ? { cacheReadTokens: usage.cache_read_input_tokens } : {}),
       ...(usage?.cache_creation_input_tokens != null ? { cacheWriteTokens: usage.cache_creation_input_tokens } : {}),
+      ...(contextWindow != null ? { contextTokens: contextWindow } : {}),
     } }];
   }
 
@@ -91,6 +118,12 @@ export function translateClaudeEvent(raw: unknown): AgentEvent[] {
   }
 
   return [];
+}
+
+function number(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? value : undefined; }
+function sumDefined(...values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return present.length ? present.reduce((total, value) => total + Math.max(0, value), 0) : undefined;
 }
 
 export function claudeToolAccess(tool: string): 'read-only' | 'workspace' | 'full' {

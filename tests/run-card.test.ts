@@ -33,6 +33,17 @@ describe('RunCardState', () => {
     question.apply({ type: 'question.requested', questionId: 'raw', token: 'opaque', prompt: 'Pick', options: ['A', 'B'] });
     expect(JSON.stringify(question.render())).not.toContain('"tag":"action"');
   });
+  it('renders complete OpenClaw-style runtime metrics and preserves pending interactions', () => {
+    const state = new RunCardState('r', 's', 1_000);
+    state.apply({ type: 'approval.requested', requestId: 'request', token: 'opaque', action: 'Bash', access: 'workspace' });
+    state.apply({ type: 'metrics.updated', metrics: { model: 'zhipu/glm-5.3', totalTokens: 246_000 } });
+    expect(state.status).toBe('waiting');
+    expect(state.pending).toMatchObject({ kind: 'approval', id: 'opaque' });
+    state.apply({ type: 'run.completed', metrics: { inputTokens: 244_000, outputTokens: 3_500, cacheReadTokens: 246_000, cacheWriteTokens: 0, contextTokens: 1_048_576 } });
+    const card = JSON.stringify(state.render(200_000));
+    expect(card).toContain('已完成 · 耗时 3m 19s · zhipu/glm-5.3');
+    expect(card).toContain('↑ 244k ↓ 3.5k · 缓存 246k/0 (50%) · 上下文 246k/1.0m (23%)');
+  });
   it('renders compact Skill and Terminal summaries without successful output', () => {
     const state = new RunCardState('r', 's');
     state.apply({ type: 'tool.started', toolCallId: 'skill', name: 'Skill', input: { skill: 'lark-drive' } });
