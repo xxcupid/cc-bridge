@@ -100,3 +100,9 @@ CardKit 创建或更新失败时，Bridge 不继续留下不可见的后台任�
 `main` 是可发布集成分支，功能和修复从独立分支通过 Pull Request 合入。未发布的用户可见变化记录在 `CHANGELOG.md` 的 `Unreleased` 部分。发布时同步更新 `package.json`、锁文件和 Changelog，再创建不可移动的 annotated `vX.Y.Z` 标签。
 
 历史基线 `v0.1.0` 指向 `dcd8620`；其后的 `f40ff6f` 曾直接进入 `main`，现作为未发布变化记录。后续开发不再直接提交到 `main`。
+
+## 13. 内建命令与帮助卡片
+
+以 `/` 开头且由 Bridge 注册的命令必须在 Command Router 内直接终止，不进入 Claude/Codex Prompt。`/help` 使用 Channel SDK 的静态 CardKit 2.0 发送能力返回当前真实支持的命令，并提供当前状态、Session、Workspace 和新建 Session 快捷按钮。按钮回调只能从固定命令白名单中选择，不接受任意路径、参数或 Prompt；群聊话题 ID 随帮助卡片上下文回传，使快捷操作仍落在原话题 Session scope。
+
+`ChannelPort.sendCard` 保持可选，以便测试或非飞书 Channel 降级为 Markdown；生产 `LarkChannelGateway` 直接调用 `@larksuite/channel.send(..., { card })`，静态帮助卡不占用流式卡片生命周期。

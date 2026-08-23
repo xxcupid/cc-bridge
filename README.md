@@ -156,6 +156,7 @@ node dist/cli.js service uninstall --profile work-claude
 
 ## 飞书命令
 
+- `/help`：显示命令说明和 Session、Workspace 快捷操作卡片。
 - `/new [名称]`：创建并切换 Session。
 - `/list`、`/sessions`：查看 Session。
 - `/switch <名称或 ID 前缀>`：切换 Session。

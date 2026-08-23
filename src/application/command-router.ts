@@ -4,6 +4,7 @@ import type { ChannelPort, StreamCardOptions } from '../channel/port.js';
 import { SessionStore } from '../session/session-store.js';
 import { resolveWorkspace } from '../workspace/workspace-policy.js';
 import { WorkspaceStore } from '../workspace/workspace-store.js';
+import { helpCard, helpMarkdown } from '../presentation/help-card.js';
 
 export interface CommandRouterOptions {
   channel: ChannelPort;
@@ -25,6 +26,7 @@ export class CommandRouter {
     const args = parts.join(' ').trim();
     const scope = messageScope(message);
     switch (command) {
+      case '/help': await this.help(message); break;
       case '/new': await this.newSession(message, scope, args); break;
       case '/list': case '/sessions': await this.list(message, scope); break;
       case '/switch': await this.switch(message, scope, args); break;
@@ -39,6 +41,15 @@ export class CommandRouter {
       default: return false;
     }
     return true;
+  }
+
+  private async help(message: IncomingMessage): Promise<void> {
+    const options: StreamCardOptions = { replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}) };
+    if (this.options.channel.sendCard) {
+      await this.options.channel.sendCard(message.chatId, helpCard(message.threadId), options);
+      return;
+    }
+    await this.options.channel.sendMarkdown(message.chatId, helpMarkdown(), options);
   }
 
   private async newSession(message: IncomingMessage, scope: string, name: string): Promise<void> {

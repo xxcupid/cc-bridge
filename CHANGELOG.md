@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Add a native `/help` CardKit card with safe shortcuts for current status, Sessions, Workspaces, and new Sessions.
 - Add isolated named Profiles so one machine can connect multiple Feishu/Lark apps through independent Bridge and LaunchAgent instances.
 - Add `profile create/list/show/use/remove` and `--profile` support for run, diagnostics, and service lifecycle commands.
 - Add cross-process Profile and App ID locks to prevent duplicate WebSocket consumers, with stale-lock recovery.

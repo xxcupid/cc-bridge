@@ -81,8 +81,9 @@ Expected: Codex uses the same streaming card model, records a native thread ID, 
 
 | Requirement | Current evidence | Status |
 |---|---|---|
-| Typecheck, tests, build | Node 26; 24 files and 80 tests; ESM/DTS build | Passed |
+| Typecheck, tests, build | Node 26; 26 files and 84 tests; ESM/DTS build | Passed |
 | Channel connection and service | LaunchAgent running; `ws client ready` | Passed |
+| Bridge help command | `/help` command, CardKit renderer, fixed callback allowlist, topic-scope integration tests, and user-confirmed real Feishu card/button regression on 2026-08-23 | Passed |
 | Claude Adapter protocol and permissions | Automated stdio tests; historical real Feishu run | Latest real Feishu regression pending |
 | Codex Adapter | Real local app-server smoke returned `OSCAR_CODEX_OK`; protocol tests; bootstrap failure terminates the child process | Real Feishu E2E pending |
 | Streaming card, tool/thinking, throttle | Renderer and presenter tests; successful tool output is compact; failed output remains bounded; CardKit failure cancels the invisible Agent run | Latest real Feishu regression pending |

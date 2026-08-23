@@ -10,6 +10,7 @@ import { SessionStore } from '../session/session-store.js';
 import { WorkspaceStore } from '../workspace/workspace-store.js';
 import { ApprovalStore } from '../approval/approval-store.js';
 import { resolveWorkspace } from '../workspace/workspace-policy.js';
+import { parseHelpCardAction } from '../presentation/help-card.js';
 
 export interface BridgeApplicationOptions {
   channel: ChannelPort;
@@ -187,6 +188,18 @@ export class BridgeApplication {
       ? action.value as Record<string, unknown>
       : fallbackToken ? { action: 'answer', token: fallbackToken } : undefined;
     if (!value) return undefined;
+    const helpAction = parseHelpCardAction(value);
+    if (helpAction) {
+      await this.commands.handle({
+        messageId: action.messageId,
+        chatId: action.chatId,
+        chatType: 'p2p',
+        senderId: action.operatorId,
+        content: helpAction.command,
+        ...(helpAction.threadId ? { threadId: helpAction.threadId } : {}),
+      });
+      return { toast: { type: 'success', content: '命令已执行' } };
+    }
     if (value.action === 'stop') {
       if (typeof value.scope !== 'string' || typeof value.runId !== 'string') return undefined;
       const active = [...this.activeRuns.values()].find((run) => run.scope === value.scope && run.runId === value.runId);

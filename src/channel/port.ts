@@ -19,6 +19,7 @@ export interface ChannelPort {
     producer: (controller: CardController) => Promise<void>,
     options?: StreamCardOptions,
   ): Promise<{ messageId: string }>;
+  sendCard?(chatId: string, card: object, options?: StreamCardOptions): Promise<{ messageId: string }>;
   sendMarkdown(chatId: string, markdown: string, options?: StreamCardOptions): Promise<void>;
   addReaction?(messageId: string, emojiType: string): Promise<string>;
   removeReaction?(messageId: string, reactionId: string): Promise<void>;

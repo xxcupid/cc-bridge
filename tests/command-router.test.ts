@@ -8,6 +8,31 @@ import { SessionStore } from '../src/session/session-store.js';
 import { WorkspaceStore } from '../src/workspace/workspace-store.js';
 
 describe('CommandRouter', () => {
+  it('handles /help inside the Bridge and sends an interactive command card', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oscar-command-'));
+    const cards: object[] = [];
+    const channel: ChannelPort = {
+      onMessage() {}, onCardAction() {}, async connect() {}, async disconnect() {},
+      async streamCard() { return { messageId: 'x' }; },
+      async sendCard(_chat, card) { cards.push(card); return { messageId: 'help-card' }; },
+      async sendMarkdown() { throw new Error('interactive card should be used'); },
+    };
+    const router = new CommandRouter({
+      channel,
+      sessions: new SessionStore(join(dir, 'sessions.json')),
+      workspaces: new WorkspaceStore(join(dir, 'workspaces.json')),
+      defaultAgent: 'claude',
+      defaultWorkspace: dir,
+      defaultMode: 'default',
+      async cancelScope() { return false; },
+    });
+
+    expect(await router.handle({ messageId: 'm', chatId: 'c', chatType: 'p2p', senderId: 'u', content: '/HELP' })).toBe(true);
+    expect(cards).toHaveLength(1);
+    expect(JSON.stringify(cards[0])).toContain('/agent claude|codex');
+    expect(JSON.stringify(cards[0])).toContain('help.command');
+  });
+
   it('creates, lists, switches and ends named sessions', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oscar-command-'));
     const replies: string[] = [];
