@@ -97,12 +97,14 @@ export function translateClaudeEvent(raw: unknown): AgentEvent[] {
     const model = modelEntry?.[0];
     const contextWindow = number(modelEntry?.[1]?.contextWindow) ?? number(modelEntry?.[1]?.context_window);
     const usage = event.usage;
+    const totalTokens = usage ? sumDefined(usage.input_tokens, usage.output_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens) : undefined;
     return [{ type: 'run.completed', nativeSessionId: event.session_id, metrics: {
       ...(model ? { model } : {}),
       ...(usage?.input_tokens != null ? { inputTokens: usage.input_tokens } : {}),
       ...(usage?.output_tokens != null ? { outputTokens: usage.output_tokens } : {}),
       ...(usage?.cache_read_input_tokens != null ? { cacheReadTokens: usage.cache_read_input_tokens } : {}),
       ...(usage?.cache_creation_input_tokens != null ? { cacheWriteTokens: usage.cache_creation_input_tokens } : {}),
+      ...(totalTokens != null ? { totalTokens } : {}),
       ...(contextWindow != null ? { contextTokens: contextWindow } : {}),
     } }];
   }
