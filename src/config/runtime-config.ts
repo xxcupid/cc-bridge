@@ -16,7 +16,13 @@ export interface RuntimeConfig {
   dataDir: string;
   claudeBinary: string;
   codexBinary: string;
+  piBinary: string;
+  piProvider: string;
+  piModel: string;
   runTimeoutMs: number;
+  multicaServerUrl?: string;
+  multicaApiToken?: string;
+  multicaWorkspaceId?: string;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -24,7 +30,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const appId = required(env, 'OSCAR_LARK_APP_ID');
   const appSecret = required(env, 'OSCAR_LARK_APP_SECRET');
   const defaultWorkspace = required(env, 'OSCAR_LARK_WORKSPACE');
-  const defaultAgent = oneOf(env.OSCAR_LARK_DEFAULT_AGENT ?? 'claude', ['claude', 'codex'] as const, 'OSCAR_LARK_DEFAULT_AGENT');
+  const defaultAgent = oneOf(env.OSCAR_LARK_DEFAULT_AGENT ?? 'claude', ['claude', 'codex', 'pi'] as const, 'OSCAR_LARK_DEFAULT_AGENT');
   const mode = oneOf(env.OSCAR_LARK_MODE ?? 'default', ['default', 'yolo'] as const, 'OSCAR_LARK_MODE');
   const maxAccess = oneOf(env.OSCAR_LARK_MAX_ACCESS ?? 'workspace', ['read-only', 'workspace', 'full'] as const, 'OSCAR_LARK_MAX_ACCESS');
   return {
@@ -37,15 +43,21 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     dataDir: resolve(env.OSCAR_LARK_DATA_DIR ?? join(homedir(), '.oscar-lark-bridge')),
     claudeBinary: env.OSCAR_LARK_CLAUDE_BINARY ?? 'claude',
     codexBinary: env.OSCAR_LARK_CODEX_BINARY ?? 'codex',
+    piBinary: env.OSCAR_LARK_PI_BINARY ?? 'pi',
+    piProvider: env.OSCAR_LARK_PI_PROVIDER ?? 'minimax-anthropic',
+    piModel: env.OSCAR_LARK_PI_MODEL ?? 'MiniMax-M3[1M]',
     runTimeoutMs: nonNegativeInteger(env.OSCAR_LARK_RUN_TIMEOUT_MS ?? '1800000', 'OSCAR_LARK_RUN_TIMEOUT_MS'),
+    ...(env.OSCAR_LARK_MULTICA_SERVER_URL ? { multicaServerUrl: env.OSCAR_LARK_MULTICA_SERVER_URL } : {}),
+    ...(env.OSCAR_LARK_MULTICA_API_TOKEN ? { multicaApiToken: env.OSCAR_LARK_MULTICA_API_TOKEN } : {}),
+    ...(env.OSCAR_LARK_MULTICA_WORKSPACE_ID ? { multicaWorkspaceId: env.OSCAR_LARK_MULTICA_WORKSPACE_ID } : {}),
   };
 }
 
 export const SERVICE_ENV_KEYS = [
   'OSCAR_LARK_APP_ID', 'OSCAR_LARK_APP_SECRET', 'OSCAR_LARK_WORKSPACE', 'OSCAR_LARK_DEFAULT_AGENT',
   'OSCAR_LARK_MODE', 'OSCAR_LARK_MAX_ACCESS', 'OSCAR_LARK_DOMAIN', 'OSCAR_LARK_DM_ALLOWLIST',
-  'OSCAR_LARK_GROUP_ALLOWLIST', 'OSCAR_LARK_REQUIRE_MENTION', 'OSCAR_LARK_DATA_DIR',
-  'OSCAR_LARK_CLAUDE_BINARY', 'OSCAR_LARK_CODEX_BINARY', 'OSCAR_LARK_RUN_TIMEOUT_MS',
+  'OSCAR_LARK_GROUP_ALLOWLIST', 'OSCAR_LARK_REQUIRE_MENTION', 'OSCAR_LARK_DATA_DIR', 'OSCAR_LARK_PI_BINARY', 'OSCAR_LARK_PI_PROVIDER', 'OSCAR_LARK_PI_MODEL',
+  'OSCAR_LARK_CLAUDE_BINARY', 'OSCAR_LARK_CODEX_BINARY', 'OSCAR_LARK_RUN_TIMEOUT_MS', 'OSCAR_LARK_MULTICA_SERVER_URL', 'OSCAR_LARK_MULTICA_API_TOKEN', 'OSCAR_LARK_MULTICA_WORKSPACE_ID',
 ] as const;
 
 export function serviceEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {

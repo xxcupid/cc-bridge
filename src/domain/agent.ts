@@ -1,4 +1,4 @@
-export type AgentId = 'claude' | 'codex';
+export type AgentId = 'claude' | 'codex' | 'pi';
 export type AccessLevel = 'read-only' | 'workspace' | 'full';
 export type PermissionMode = 'default' | 'yolo';
 export interface RunMetrics {
@@ -11,6 +11,10 @@ export interface RunMetrics {
   totalTokens?: number;
   /** Maximum model context window size. */
   contextTokens?: number;
+  /** Number of persisted events replayed from an external backend. */
+  messageCount?: number;
+  /** Human-readable source label for externally replayed runs. */
+  source?: string;
 }
 
 export interface AgentRunRequest {

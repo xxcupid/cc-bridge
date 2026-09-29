@@ -17,6 +17,8 @@ export * from './channel/port.js';
 export * from './channel/lark-channel.js';
 export * from './presentation/run-card.js';
 export * from './presentation/streaming-card-presenter.js';
+export * from './integrations/multica/task-message-client.js';
+export * from './integrations/multica/http-task-client.js';
 export * from './presentation/throttled-updater.js';
 export * from './infrastructure/atomic-json-file.js';
 export * from './session/session-store.js';

@@ -101,8 +101,10 @@ function safeJson(value: unknown): string { try { return JSON.stringify(value, n
 function collapsible(title: string, content: string, expanded: boolean): object { return { tag: 'collapsible_panel', expanded, header: { title: { tag: 'plain_text', content: title, text_color: 'grey', text_size: 'notation' }, vertical_align: 'center', icon: { tag: 'standard_icon', token: 'down-small-ccm_outlined', color: 'grey', size: '16px 16px' }, icon_position: 'right', icon_expanded_angle: -180 }, border: { color: 'grey', corner_radius: '5px' }, padding: '8px 8px 8px 8px', elements: [{ tag: 'markdown', content, text_size: 'notation' }] }; }
 function footer(status: CardRunStatus, elapsed: number, m: RunMetrics): string {
   const labels = { running: '运行中', waiting: '等待用户操作', completed: '已完成', failed: '失败', cancelled: '已停止' };
-  const first = [labels[status], `耗时 ${formatElapsed(elapsed * 1_000)}`, m.model].filter(Boolean).join(' · ');
+  const durationLabel = m.source ? '回放耗时' : '耗时';
+  const first = [labels[status], `${durationLabel} ${formatElapsed(elapsed * 1_000)}`, m.model ?? m.source].filter(Boolean).join(' · ');
   const detail: string[] = [];
+  if (m.messageCount != null) detail.push(`事件 ${compact(m.messageCount)} 条`);
   if (m.inputTokens != null && m.outputTokens != null) detail.push(`↑ ${compact(m.inputTokens)} ↓ ${compact(m.outputTokens)}`);
   if (m.cacheReadTokens != null || m.cacheWriteTokens != null) {
     const read = Math.max(0, m.cacheReadTokens ?? 0); const write = Math.max(0, m.cacheWriteTokens ?? 0); const input = Math.max(0, m.inputTokens ?? 0);

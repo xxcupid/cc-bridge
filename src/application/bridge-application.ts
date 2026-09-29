@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentEvent, AgentRunHandle } from '../domain/agent.js';
+import type { AgentEvent, AgentId, AgentRunHandle } from '../domain/agent.js';
 import { messageScope, type CardAction, type IncomingMessage } from '../domain/message.js';
 import type { ChannelPort } from '../channel/port.js';
 import { StreamingCardPresenter } from '../presentation/streaming-card-presenter.js';
@@ -11,11 +11,12 @@ import { WorkspaceStore } from '../workspace/workspace-store.js';
 import { ApprovalStore } from '../approval/approval-store.js';
 import { resolveWorkspace } from '../workspace/workspace-policy.js';
 import { parseHelpCardAction } from '../presentation/help-card.js';
+import type { MulticaTaskEventSource } from '../integrations/multica/task-message-client.js';
 
 export interface BridgeApplicationOptions {
   channel: ChannelPort;
   agents: AgentRegistry;
-  defaultAgent: 'claude' | 'codex';
+  defaultAgent: AgentId;
   defaultWorkspace: string;
   permission: { mode: 'default' | 'yolo'; maxAccess: 'read-only' | 'workspace' | 'full' };
   sessions: SessionStore;
@@ -23,6 +24,7 @@ export interface BridgeApplicationOptions {
   approvals: ApprovalStore;
   cardThrottleMs?: number;
   runTimeoutMs?: number;
+  multicaTaskSource?: MulticaTaskEventSource;
 }
 
 export class BridgeApplication {
@@ -39,7 +41,14 @@ export class BridgeApplication {
       channel: options.channel, sessions: options.sessions, workspaces: options.workspaces,
       defaultAgent: options.defaultAgent, defaultWorkspace: options.defaultWorkspace,
       defaultMode: options.permission.mode, cancelScope: (scope) => this.cancelScope(scope),
+      streamMulticaTask: options.multicaTaskSource ? (message, taskId) => this.streamMulticaTask(message, taskId) : undefined,
     });
+  }
+
+  private async streamMulticaTask(message: IncomingMessage, taskId: string): Promise<void> {
+    const source = this.options.multicaTaskSource!;
+    const runId = `multica-${taskId}-${randomUUID()}`;
+    await this.presenter.present(runId, messageScope(message), message, source.events(taskId));
   }
 
   async start(): Promise<void> {

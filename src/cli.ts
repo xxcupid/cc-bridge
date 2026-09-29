@@ -5,6 +5,7 @@ import { AgentRegistry } from './application/agent-registry.js';
 import { BridgeApplication } from './application/bridge-application.js';
 import { ClaudeAdapter } from './agents/claude/adapter.js';
 import { CodexAppServerAdapter } from './agents/codex/app-server-adapter.js';
+import { PiRpcAdapter } from './agents/pi/adapter.js';
 import { LarkChannelGateway } from './channel/lark-channel.js';
 import { loadRuntimeConfig } from './config/runtime-config.js';
 import {
@@ -26,13 +27,30 @@ import { ApprovalStore } from './approval/approval-store.js';
 import { LaunchdService, type ServiceResult } from './service/launchd.js';
 import { agentDoctorChecks, formatDoctorCheck, type DoctorCheck } from './diagnostics/doctor.js';
 import { acquireInstanceLocks } from './runtime/instance-lock.js';
+import { MulticaHttpTaskClient } from './integrations/multica/http-task-client.js';
+import { MulticaTaskEventSource } from './integrations/multica/task-message-client.js';
 
 interface ProfileOption { profile?: string }
 
 const program = new Command().name('oscar-lark-bridge').description('Feishu/Lark bridge for local coding agents').version('0.1.0');
+const runningProfiles: Array<{ profile: string; app: BridgeApplication; release: () => Promise<void> }> = [];
+let shutdownStarted = false;
 
-withProfile(program.command('run').description('Run one bridge profile in the foreground')).action(async (options: ProfileOption) => {
-  const paths = await selectedProfilePaths(options.profile);
+const runCommand = withProfile(program.command('run').description('Run one bridge profile in the foreground'))
+  .option('--profiles <names>', 'run multiple comma-separated profiles in one process');
+runCommand.action(async (options: ProfileOption & { profiles?: string }) => {
+  if (options.profiles) {
+    const names = options.profiles.split(',').map((name) => name.trim()).filter(Boolean);
+    if (!names.length) throw new Error('--profiles requires at least one profile name');
+    const unique = [...new Set(names)];
+    await Promise.all(unique.map(async (name) => runProfile(await selectedProfilePaths(name), false)));
+    installSupervisorSignals();
+    return;
+  }
+  await runProfile(await selectedProfilePaths(options.profile), true);
+});
+
+async function runProfile(paths: ProfilePaths, installSignals: boolean): Promise<void> {
   const config = loadRuntimeConfig(profileEnvironment(paths));
   const workspace = await resolveWorkspace(config.defaultWorkspace);
   if (!workspace.ok) throw new Error(workspace.message);
@@ -45,6 +63,10 @@ withProfile(program.command('run').description('Run one bridge profile in the fo
   const agents = new AgentRegistry();
   agents.register(new ClaudeAdapter({ binary: config.claudeBinary }));
   agents.register(new CodexAppServerAdapter({ binary: config.codexBinary }));
+  agents.register(new PiRpcAdapter({ binary: config.piBinary, provider: config.piProvider, model: config.piModel }));
+  const multicaTaskSource = config.multicaServerUrl && config.multicaApiToken && config.multicaWorkspaceId
+    ? new MulticaTaskEventSource(new MulticaHttpTaskClient({ baseUrl: config.multicaServerUrl, token: config.multicaApiToken, workspaceId: config.multicaWorkspaceId }))
+    : undefined;
   const app = new BridgeApplication({
     channel, agents, defaultAgent: config.defaultAgent, defaultWorkspace: workspace.path,
     permission: config.permission,
@@ -52,33 +74,43 @@ withProfile(program.command('run').description('Run one bridge profile in the fo
     workspaces: new WorkspaceStore(join(config.dataDir, 'workspaces.json')),
     approvals: new ApprovalStore(join(config.dataDir, 'approvals.json')),
     runTimeoutMs: config.runTimeoutMs,
+    ...(multicaTaskSource ? { multicaTaskSource } : {}),
   });
   const locks = await acquireInstanceLocks(paths.rootDir, paths.profile, config.appId);
   try { await app.start(); }
   catch (error) { await locks.release(); throw error; }
+  runningProfiles.push({ profile: paths.profile, app, release: locks.release });
   console.log(`oscar-lark-bridge connected (profile: ${paths.profile})`);
+  if (installSignals) installSupervisorSignals();
+}
+
+function installSupervisorSignals(): void {
+  if (shutdownStarted || (process as NodeJS.Process & { __oscarSignals?: boolean }).__oscarSignals) return;
+  (process as NodeJS.Process & { __oscarSignals?: boolean }).__oscarSignals = true;
   const shutdown = async (signal: string) => {
-    console.log(`received ${signal}, shutting down`);
-    try { await app.stop(); }
-    finally { await locks.release(); }
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    console.log(`received ${signal}, shutting down ${runningProfiles.length} profile(s)`);
+    await Promise.allSettled(runningProfiles.flatMap(({ app, release }) => [app.stop(), release()]));
     process.exit(0);
   };
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
-});
+}
 
 withProfile(program.command('doctor').description('Validate one profile, workspace, and local agent binaries')).action(async (options: ProfileOption) => {
   const paths = await selectedProfilePaths(options.profile);
   let config;
   try { config = loadRuntimeConfig(profileEnvironment(paths)); }
   catch (error) { console.error(`FAIL config: ${(error as Error).message}`); process.exitCode = 1; return; }
-  const [claudeAvailable, codexAvailable] = await Promise.all([
+  const [claudeAvailable, codexAvailable, piAvailable] = await Promise.all([
     commandAvailable(config.claudeBinary),
     commandAvailable(config.codexBinary),
+    commandAvailable(config.piBinary),
   ]);
   const checks: DoctorCheck[] = [
     { name: 'workspace', ok: (await resolveWorkspace(config.defaultWorkspace)).ok, required: true },
-    ...agentDoctorChecks(config.defaultAgent, { claude: claudeAvailable, codex: codexAvailable }),
+    ...agentDoctorChecks(config.defaultAgent, { claude: claudeAvailable, codex: codexAvailable, pi: piAvailable }),
     { name: 'app credentials', ok: Boolean(config.appId && config.appSecret), required: true },
   ];
   console.log(`profile: ${paths.profile}`);
