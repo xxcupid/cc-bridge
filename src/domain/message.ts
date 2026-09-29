@@ -5,6 +5,12 @@ export interface IncomingMessage {
   senderId: string;
   content: string;
   threadId?: string;
+  senderName?: string;
+  senderType?: string;
+  senderIsBot?: boolean;
+  mentions?: Array<{ id?: string; name?: string; isBot?: boolean }>;
+  mentionedBot?: boolean;
+  createTime?: number;
 }
 
 export interface CardAction {

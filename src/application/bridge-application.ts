@@ -12,6 +12,7 @@ import { ApprovalStore } from '../approval/approval-store.js';
 import { resolveWorkspace } from '../workspace/workspace-policy.js';
 import { parseHelpCardAction } from '../presentation/help-card.js';
 import type { MulticaTaskEventSource } from '../integrations/multica/task-message-client.js';
+import { buildGroupPrompt, GroupContextStore } from '../context/group-context-store.js';
 
 export interface BridgeApplicationOptions {
   channel: ChannelPort;
@@ -25,6 +26,8 @@ export interface BridgeApplicationOptions {
   cardThrottleMs?: number;
   runTimeoutMs?: number;
   multicaTaskSource?: MulticaTaskEventSource;
+  requireMention?: boolean;
+  groupContext?: GroupContextStore;
 }
 
 export class BridgeApplication {
@@ -53,7 +56,7 @@ export class BridgeApplication {
 
   async start(): Promise<void> {
     this.stopping = false;
-    await Promise.all([this.options.sessions.load(), this.options.workspaces.load(), this.options.approvals.load()]);
+    await Promise.all([this.options.sessions.load(), this.options.workspaces.load(), this.options.approvals.load(), this.options.groupContext?.load()]);
     this.options.channel.onMessage((message) => this.trackMessage(message));
     this.options.channel.onCardAction((action) => this.handleCardAction(action));
     await this.options.channel.connect();
@@ -69,6 +72,7 @@ export class BridgeApplication {
         this.options.sessions.flush(),
         this.options.workspaces.flush(),
         this.options.approvals.flush(),
+        this.options.groupContext?.flush(),
       ]);
     } finally {
       await this.options.channel.disconnect();
@@ -87,8 +91,12 @@ export class BridgeApplication {
 
   private async handleMessage(message: IncomingMessage): Promise<void> {
     if (this.stopping || !message.content.trim()) return;
+    if (message.chatType === 'group') {
+      this.options.groupContext?.append(message);
+    }
     const scope = messageScope(message);
     if (await this.commands.handle(message)) return;
+    if (message.chatType === 'group' && this.options.requireMention !== false && !message.mentionedBot) return;
     const reactionId = await addWorkingReaction(this.options.channel, message.messageId);
     const session = this.options.sessions.active(scope) ?? this.options.sessions.create(scope, {
       agentId: this.options.defaultAgent,
@@ -114,7 +122,9 @@ export class BridgeApplication {
         handle = await this.options.agents.get(session.agentId).start({
           runId,
           sessionId: session.id,
-          prompt: message.content,
+          prompt: message.chatType === 'group'
+            ? buildGroupPrompt(message, this.options.groupContext?.recent(message) ?? [])
+            : message.content,
           cwd: workspace.path,
           ...(session.nativeSessionId ? { resumeId: session.nativeSessionId } : {}),
           permission: { mode: session.mode, maxAccess: this.options.permission.maxAccess },

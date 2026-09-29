@@ -3,6 +3,7 @@ import type { CardAction, IncomingMessage } from '../domain/message.js';
 import type { CardController, ChannelPort, StreamCardOptions } from './port.js';
 
 export interface LarkChannelGatewayOptions {
+  profile?: string;
   appId: string;
   appSecret: string;
   domain?: string;
@@ -13,8 +14,10 @@ export interface LarkChannelGatewayOptions {
 
 export class LarkChannelGateway implements ChannelPort {
   private readonly channel: LarkChannel;
+  private readonly profile: string;
 
   constructor(options: LarkChannelGatewayOptions) {
+    this.profile = options.profile ?? 'unknown';
     this.channel = createLarkChannel({
       appId: options.appId,
       appSecret: options.appSecret,
@@ -29,7 +32,9 @@ export class LarkChannelGateway implements ChannelPort {
         dmMode: options.dmAllowlist?.length ? 'allowlist' : 'open',
         dmAllowlist: options.dmAllowlist ?? [],
         groupAllowlist: options.groupAllowlist ?? [],
-        requireMention: options.requireMention ?? true,
+        // Receive group messages even when they do not mention this bot.
+        // BridgeApplication applies the dispatch gate after passive-context capture.
+        requireMention: false,
         respondToMentionAll: false,
       },
       safety: {
@@ -42,14 +47,27 @@ export class LarkChannelGateway implements ChannelPort {
 
   onMessage(handler: (message: IncomingMessage) => Promise<void>): void {
     this.channel.on('message', async (message) => {
+      console.log(`[lark-channel:${this.profile}] inbound messageId=${message.messageId} chatType=${message.chatType} chatId=${message.chatId} mentionedBot=${message.mentionedBot} content=${JSON.stringify(message.content)}`);
       await handler({
         messageId: message.messageId,
         chatId: message.chatId,
         chatType: message.chatType,
         senderId: message.senderId,
         content: message.content,
+        ...(message.senderName ? { senderName: message.senderName } : {}),
+        ...(message.senderType ? { senderType: message.senderType } : {}),
+        ...(message.senderIsBot !== undefined ? { senderIsBot: message.senderIsBot } : {}),
+        mentions: message.mentions as Array<{ id?: string; name?: string; isBot?: boolean }>,
+        mentionedBot: message.mentionedBot,
+        createTime: message.createTime,
         ...(message.threadId ? { threadId: message.threadId } : {}),
       });
+    });
+    this.channel.on('reject', (event) => {
+      console.warn(`[lark-channel] message rejected: ${JSON.stringify(event)}`);
+    });
+    this.channel.on('error', (error) => {
+      console.warn(`[lark-channel] channel error: ${String(error)}`);
     });
   }
 

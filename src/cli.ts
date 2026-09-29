@@ -29,6 +29,7 @@ import { agentDoctorChecks, formatDoctorCheck, type DoctorCheck } from './diagno
 import { acquireInstanceLocks } from './runtime/instance-lock.js';
 import { MulticaHttpTaskClient } from './integrations/multica/http-task-client.js';
 import { MulticaTaskEventSource } from './integrations/multica/task-message-client.js';
+import { GroupContextStore } from './context/group-context-store.js';
 
 interface ProfileOption { profile?: string }
 
@@ -55,6 +56,7 @@ async function runProfile(paths: ProfilePaths, installSignals: boolean): Promise
   const workspace = await resolveWorkspace(config.defaultWorkspace);
   if (!workspace.ok) throw new Error(workspace.message);
   const channel = new LarkChannelGateway({
+    profile: paths.profile,
     appId: config.appId, appSecret: config.appSecret,
     ...(config.domain ? { domain: config.domain } : {}),
     dmAllowlist: config.dmAllowlist, groupAllowlist: config.groupAllowlist,
@@ -74,6 +76,8 @@ async function runProfile(paths: ProfilePaths, installSignals: boolean): Promise
     workspaces: new WorkspaceStore(join(config.dataDir, 'workspaces.json')),
     approvals: new ApprovalStore(join(config.dataDir, 'approvals.json')),
     runTimeoutMs: config.runTimeoutMs,
+    requireMention: config.requireMention,
+    groupContext: new GroupContextStore(join(config.dataDir, 'group-context.json')),
     ...(multicaTaskSource ? { multicaTaskSource } : {}),
   });
   const locks = await acquireInstanceLocks(paths.rootDir, paths.profile, config.appId);

@@ -31,7 +31,7 @@ describe('BridgeApplication help flow', () => {
     });
 
     await app.start();
-    await channel.emitMessage({ messageId: 'm-help', chatId: 'c1', chatType: 'group', threadId: 't1', senderId: 'u1', content: '/help' });
+    await channel.emitMessage({ messageId: 'm-help', chatId: 'c1', chatType: 'group', threadId: 't1', senderId: 'u1', content: '/help', mentionedBot: true });
     expect(adapter.starts).toBe(0);
     expect(channel.cards).toHaveLength(1);
 
