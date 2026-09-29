@@ -6,11 +6,11 @@ export interface DoctorCheck {
   required: boolean;
 }
 
-export function agentDoctorChecks(selected: AgentId, availability: Record<AgentId, boolean>): DoctorCheck[] {
-  const other: AgentId = selected === 'claude' ? 'codex' : 'claude';
+export function agentDoctorChecks(selected: AgentId, availability: Partial<Record<AgentId, boolean>>): DoctorCheck[] {
+  const other: AgentId = selected === 'claude' ? 'codex' : selected === 'codex' ? 'claude' : 'pi';
   return [
-    { name: selected, ok: availability[selected], required: true },
-    { name: other, ok: availability[other], required: false },
+    { name: selected, ok: availability[selected] ?? false, required: true },
+    { name: other, ok: availability[other] ?? false, required: false },
   ];
 }
 

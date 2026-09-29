@@ -79,6 +79,19 @@ describe('CommandRouter', () => {
     expect(replies.at(-1)).toContain('正在停止');
   });
 
+  it('handles /reload inside the Bridge instead of sending it to the Agent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oscar-command-'));
+    const replies: string[] = [];
+    const channel: ChannelPort = {
+      onMessage() {}, onCardAction() {}, async connect() {}, async disconnect() {},
+      async streamCard() { return { messageId: 'x' }; },
+      async sendMarkdown(_chat, markdown) { replies.push(markdown); },
+    };
+    const router = new CommandRouter({ channel, sessions: new SessionStore(join(dir, 'sessions.json')), workspaces: new WorkspaceStore(join(dir, 'workspaces.json')), defaultAgent: 'pi', defaultWorkspace: dir, defaultMode: 'default', async cancelScope() { return false; } });
+    expect(await router.handle({ messageId: 'm', chatId: 'c', chatType: 'p2p', senderId: 'u', content: '/reload' })).toBe(true);
+    expect(replies.at(-1)).toContain('下一条消息');
+  });
+
   it('selects Agent and manages named Workspaces from Feishu commands', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oscar-command-'));
     const other = await mkdtemp(join(tmpdir(), 'oscar-workspace-'));

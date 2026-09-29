@@ -14,6 +14,7 @@ export interface CommandRouterOptions {
   defaultWorkspace: string;
   defaultMode: PermissionMode;
   cancelScope(scope: string): Promise<boolean>;
+  streamMulticaTask?: (message: IncomingMessage, taskId: string) => Promise<void>;
 }
 
 export class CommandRouter {
@@ -38,6 +39,10 @@ export class CommandRouter {
       case '/ws': case '/workspace': await this.workspace(message, scope, parts); break;
       case '/agent': await this.agent(message, scope, args); break;
       case '/mode': await this.mode(message, scope, args); break;
+      case '/reload': await this.reload(message); break;
+      case '/multica-task':
+        if (!args || !this.options.streamMulticaTask) { await this.reply(message, '用法：`/multica-task <task_id>`（需配置 Multica API）'); break; }
+        await this.options.streamMulticaTask(message, args.split(/\s+/)[0]!); break;
       default: return false;
     }
     return true;
@@ -135,7 +140,7 @@ export class CommandRouter {
   }
 
   private async agent(message: IncomingMessage, scope: string, input: string): Promise<void> {
-    if (input !== 'claude' && input !== 'codex') { await this.reply(message, '用法：`/agent claude|codex`'); return; }
+    if (input !== 'claude' && input !== 'codex' && input !== 'pi') { await this.reply(message, '用法：`/agent claude|codex|pi`'); return; }
     await this.options.cancelScope(scope);
     const session = this.ensureSession(scope); this.options.sessions.updateAgent(session.id, input);
     await this.reply(message, `已切换 Agent：**${input}**，原生会话已重置。`);
@@ -145,6 +150,10 @@ export class CommandRouter {
     if (input !== 'default' && input !== 'yolo') { await this.reply(message, '用法：`/mode default|yolo`'); return; }
     const session = this.ensureSession(scope); this.options.sessions.updateMode(session.id, input);
     await this.reply(message, `权限模式已切换为 **${input}**。`);
+  }
+
+  private async reload(message: IncomingMessage): Promise<void> {
+    await this.reply(message, 'Pi 资源 reload 已触发：当前 RPC 请求会结束，下一条消息将重新加载 skills、模板和上下文文件。');
   }
 
   private ensureSession(scope: string) {
