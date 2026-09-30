@@ -7,6 +7,7 @@ import { serviceEnvironment } from '../config/runtime-config.js';
 import { DEFAULT_PROFILE, normalizeProfileName } from '../config/profile.js';
 
 export const LAUNCHD_LABEL = 'com.oscar.lark-bridge';
+export const SUPERVISOR_LABEL = `${LAUNCHD_LABEL}.supervisor`;
 
 export interface LaunchdPaths { plist: string; envFile: string; stdout: string; stderr: string; }
 export interface PlistInput { nodePath: string; cliPath: string; envPath: string; rootDir: string; profile: string; paths: LaunchdPaths; }
@@ -16,6 +17,8 @@ export function launchdLabel(profile = DEFAULT_PROFILE): string {
   profile = normalizeProfileName(profile);
   return profile === DEFAULT_PROFILE ? LAUNCHD_LABEL : `${LAUNCHD_LABEL}.${profile}`;
 }
+
+export function supervisorLabel(): string { return SUPERVISOR_LABEL; }
 
 export function launchdPaths(dataDir: string, home = homedir(), profile = DEFAULT_PROFILE): LaunchdPaths {
   const logDir = join(dataDir, 'logs');
@@ -45,6 +48,33 @@ export function buildLaunchdPlist(input: PlistInput): string {
   </dict>
 </dict></plist>
 `;
+}
+
+export function buildSupervisorPlist(input: Omit<PlistInput, 'profile' | 'paths'> & { profiles: string[]; paths: LaunchdPaths }): string {
+  const xml = escapeXml;
+  const argumentsXml = [resolve(input.nodePath), resolve(input.cliPath), 'run', '--profiles', input.profiles.join(',')]
+    .map((arg) => `<string>${xml(arg)}</string>`).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${SUPERVISOR_LABEL}</string>
+  <key>ProgramArguments</key><array>${argumentsXml}</array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>${xml(input.paths.stdout)}</string>
+  <key>StandardErrorPath</key><string>${xml(input.paths.stderr)}</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>${xml(input.envPath)}</string>
+    <key>OSCAR_LARK_HOME</key><string>${xml(input.rootDir)}</string>
+  </dict>
+</dict></plist>
+`;
+}
+
+export function supervisorPaths(rootDir: string, home = homedir()): LaunchdPaths {
+  const dataDir = resolve(rootDir);
+  return { plist: join(home, 'Library', 'LaunchAgents', `${SUPERVISOR_LABEL}.plist`), envFile: '', stdout: join(dataDir, 'logs', 'supervisor.stdout.log'), stderr: join(dataDir, 'logs', 'supervisor.stderr.log') };
 }
 
 export class LaunchdService {
@@ -89,6 +119,28 @@ export class LaunchdService {
     await rm(this.paths.plist, { force: true });
     await rm(this.paths.envFile, { force: true });
   }
+  private domain(): string { return `gui/${this.input.uid ?? userInfo().uid}`; }
+  private target(): string { return `${this.domain()}/${this.label}`; }
+}
+
+export class LaunchdSupervisorService {
+  readonly paths: LaunchdPaths;
+  readonly label = SUPERVISOR_LABEL;
+  constructor(private readonly input: { profiles: string[]; rootDir: string; nodePath: string; cliPath: string; envPath: string; home?: string; uid?: number }) {
+    if (!input.profiles.length) throw new Error('supervisor requires at least one profile');
+    this.paths = supervisorPaths(input.rootDir, input.home);
+  }
+  async install(): Promise<void> {
+    if (process.platform !== 'darwin') throw new Error('service management currently supports macOS launchd only');
+    await mkdir(dirname(this.paths.plist), { recursive: true });
+    await mkdir(dirname(this.paths.stdout), { recursive: true });
+    await writePrivate(this.paths.plist, buildSupervisorPlist({ ...this.input, paths: this.paths }));
+  }
+  installed(): boolean { return existsSync(this.paths.plist); }
+  loaded(): boolean { return runLaunchctl(['print', this.target()]).ok; }
+  start(): ServiceResult { runLaunchctl(['enable', this.target()]); return this.loaded() ? runLaunchctl(['kickstart', '-k', this.target()]) : runLaunchctl(['bootstrap', this.domain(), this.paths.plist]); }
+  stop(): ServiceResult { const result = runLaunchctl(['bootout', this.target()]); runLaunchctl(['disable', this.target()]); return result; }
+  status(): { installed: boolean; loaded: boolean; plist: string; stdout: string; stderr: string; detail?: string } { const detail = runLaunchctl(['print', this.target()]); return { installed: this.installed(), loaded: detail.ok, plist: this.paths.plist, stdout: this.paths.stdout, stderr: this.paths.stderr, ...(detail.ok ? { detail: summarize(detail.stdout) } : {}) }; }
   private domain(): string { return `gui/${this.input.uid ?? userInfo().uid}`; }
   private target(): string { return `${this.domain()}/${this.label}`; }
 }

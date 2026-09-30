@@ -18,13 +18,14 @@ import {
   resolveProfilePaths,
   resolveSelectedProfile,
   useProfile,
+  normalizeProfileName,
   type ProfilePaths,
 } from './config/profile.js';
 import { SessionStore } from './session/session-store.js';
 import { resolveWorkspace } from './workspace/workspace-policy.js';
 import { WorkspaceStore } from './workspace/workspace-store.js';
 import { ApprovalStore } from './approval/approval-store.js';
-import { LaunchdService, type ServiceResult } from './service/launchd.js';
+import { LaunchdService, LaunchdSupervisorService, type ServiceResult } from './service/launchd.js';
 import { agentDoctorChecks, formatDoctorCheck, type DoctorCheck } from './diagnostics/doctor.js';
 import { acquireInstanceLocks } from './runtime/instance-lock.js';
 import { MulticaHttpTaskClient } from './integrations/multica/http-task-client.js';
@@ -162,6 +163,22 @@ profiles.command('remove <name>').description('Permanently remove an inactive na
 });
 
 const service = program.command('service').description('Manage per-profile macOS launchd services');
+service.command('install-supervisor').description('Install and start the multi-profile Supervisor LaunchAgent')
+  .option('--profiles <names>', 'comma-separated profiles', 'default,pi,multica,claude,codex')
+  .action(async (options: { profiles: string }) => {
+    const rootDir = profileRoot();
+    const manager = new LaunchdSupervisorService({
+      profiles: options.profiles.split(',').map((name) => normalizeProfileName(name.trim())).filter(Boolean),
+      rootDir, nodePath: process.execPath, cliPath: process.argv[1]!, envPath: process.env.PATH ?? '',
+    });
+    await manager.install();
+    reportServiceResult(manager.start(), `supervisor service installed and started (profiles: ${options.profiles})`);
+  });
+service.command('supervisor-status').description('Show the multi-profile Supervisor LaunchAgent state')
+  .action(async () => {
+    const manager = new LaunchdSupervisorService({ profiles: ['default'], rootDir: profileRoot(), nodePath: process.execPath, cliPath: process.argv[1]!, envPath: process.env.PATH ?? '' });
+    console.log(JSON.stringify(manager.status(), null, 2));
+  });
 withProfile(service.command('install').description('Write private profile configuration and install its LaunchAgent')).action(async (options: ProfileOption) => {
   const paths = await selectedProfilePaths(options.profile);
   const env = profileEnvironment(paths);
