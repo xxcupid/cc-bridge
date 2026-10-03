@@ -97,13 +97,16 @@ export class BridgeApplication {
     const scope = messageScope(message);
     if (await this.commands.handle(message)) return;
     if (message.chatType === 'group' && this.options.requireMention !== false && !message.mentionedBot) return;
-    const reactionId = await addWorkingReaction(this.options.channel, message.messageId);
     const session = this.options.sessions.active(scope) ?? this.options.sessions.create(scope, {
       agentId: this.options.defaultAgent,
       cwd: this.options.workspaces.forScope(scope) ?? this.options.defaultWorkspace,
       mode: this.options.permission.mode,
     });
     await this.locks.runExclusive(session.id, async () => {
+      // Add the typing reaction only after this message reaches the session lock.
+      // Messages queued behind an active Agent run must not look like they are
+      // already being processed.
+      const reactionId = await addWorkingReaction(this.options.channel, message.messageId);
       const workspace = await resolveWorkspace(session.cwd);
       if (!workspace.ok) {
         await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
