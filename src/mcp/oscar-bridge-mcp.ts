@@ -21,11 +21,11 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{
     name: 'send_file',
-    description: 'Upload a local file and send it as an attachment to the current Feishu chat. The file is read from disk, uploaded to Feishu, and delivered as a separate message. Use this after generating or downloading any file you want the user to receive.',
+    description: 'Upload a local file and send it as an attachment to the current Feishu chat. The file is read from disk, uploaded to Feishu, and delivered as a separate message. Use this after generating or downloading any file you want the user to receive. The file at `path` must already exist on disk when you call this tool; if it does not, create it first with the Write or Bash tool and only then invoke send_file. The target chat is implicit — it is the chat where the user issued the request that triggered this run.',
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path to the file on disk.' },
+        path: { type: 'string', description: 'Absolute path to the file on disk. The file must exist when this tool is called.' },
         file_name: { type: 'string', description: 'Optional display filename. Defaults to basename of path.' },
       },
       required: ['path'],
