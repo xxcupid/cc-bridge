@@ -41,7 +41,7 @@ export class LarkChannelGateway implements ChannelPort {
         staleMessageWindowMs: 5 * 60_000,
         chatQueue: { enabled: false },
       },
-      outbound: { streamThrottleMs: 400 },
+      outbound: { streamThrottleMs: 400, allowedFileDirs: ['/'] },
     });
   }
 
@@ -109,6 +109,15 @@ export class LarkChannelGateway implements ChannelPort {
 
   sendCard(chatId: string, card: object, options: StreamCardOptions = {}): Promise<{ messageId: string }> {
     return this.channel.send(chatId, { card }, options);
+  }
+
+  async sendFile(
+    chatId: string,
+    source: string | Buffer,
+    fileName: string,
+    options: StreamCardOptions = {},
+  ): Promise<{ messageId: string }> {
+    return this.channel.send(chatId, { file: { source, fileName } }, options);
   }
 
   addReaction(messageId: string, emojiType: string): Promise<string> {

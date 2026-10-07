@@ -21,6 +21,12 @@ export interface ChannelPort {
   ): Promise<{ messageId: string }>;
   sendCard?(chatId: string, card: object, options?: StreamCardOptions): Promise<{ messageId: string }>;
   sendMarkdown(chatId: string, markdown: string, options?: StreamCardOptions): Promise<void>;
+  sendFile?(
+    chatId: string,
+    source: string | Buffer,
+    fileName: string,
+    options?: StreamCardOptions,
+  ): Promise<{ messageId: string }>;
   addReaction?(messageId: string, emojiType: string): Promise<string>;
   removeReaction?(messageId: string, reactionId: string): Promise<void>;
   connect(): Promise<void>;
