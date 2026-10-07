@@ -134,7 +134,9 @@ export class BridgeApplication {
       // relative to this file's dist location, NOT cwd (LaunchAgent launches
       // us with cwd=/ and a bogus `dist/...` resolution ensues).
       const here = dirname(fileURLToPath(import.meta.url));
-      const projectRoot = join(here, '..', '..');
+      // tsup bundles bridge-application into dist/chunk-*.js (sibling of cli.js),
+      // so a single `..` from `here` lands on the project root.
+      const projectRoot = join(here, '..');
       const mcpServerScript = join(projectRoot, 'dist', 'mcp', 'oscar-bridge-mcp.js');
       let mcpListener: Awaited<ReturnType<typeof startBridgeMcpListener>> | undefined;
       let mcpConfigPath: string | undefined;
