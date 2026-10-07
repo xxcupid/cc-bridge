@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { AgentEvent, AgentId, AgentRunHandle } from '../domain/agent.js';
 import { messageScope, type CardAction, type IncomingMessage } from '../domain/message.js';
 import type { ChannelPort } from '../channel/port.js';
@@ -13,12 +15,14 @@ import { resolveWorkspace } from '../workspace/workspace-policy.js';
 import { parseHelpCardAction } from '../presentation/help-card.js';
 import type { MulticaTaskEventSource } from '../integrations/multica/task-message-client.js';
 import { buildGroupPrompt, GroupContextStore } from '../context/group-context-store.js';
+import { startBridgeMcpListener } from '../mcp/bridge-mcp-listener.js';
 
 export interface BridgeApplicationOptions {
   channel: ChannelPort;
   agents: AgentRegistry;
   defaultAgent: AgentId;
   defaultWorkspace: string;
+  oscarHome?: string;
   permission: { mode: 'default' | 'yolo'; maxAccess: 'read-only' | 'workspace' | 'full' };
   sessions: SessionStore;
   workspaces: WorkspaceStore;
@@ -121,6 +125,31 @@ export class BridgeApplication {
       }
       const runId = randomUUID();
       let handle: AgentRunHandle;
+      // Per-run MCP listener + config so the agent can call send_file.
+      // Skipped when oscarHome is not provided (e.g. legacy tests).
+      const oscarHome = this.options.oscarHome;
+      const runDir = oscarHome ? path.join(oscarHome, 'runs', runId) : undefined;
+      const mcpServerScript = path.resolve(process.cwd(), 'dist/mcp/oscar-bridge-mcp.js');
+      let mcpListener: Awaited<ReturnType<typeof startBridgeMcpListener>> | undefined;
+      let mcpConfigPath: string | undefined;
+      if (runDir) {
+        mcpListener = await startBridgeMcpListener({
+          channel: this.options.channel,
+          chatId: message.chatId,
+          runId,
+        });
+        mcpConfigPath = path.join(runDir, 'mcp-config.json');
+        await mkdir(runDir, { recursive: true });
+        await writeFile(mcpConfigPath, JSON.stringify({
+          mcpServers: {
+            'oscar-bridge': {
+              command: process.execPath,
+              args: [mcpServerScript],
+              env: { OSCAR_BRIDGE_SOCKET: mcpListener.socketPath },
+            },
+          },
+        }, null, 2));
+      }
       try {
         handle = await this.options.agents.get(session.agentId).start({
           runId,
@@ -130,9 +159,12 @@ export class BridgeApplication {
             : message.content,
           cwd: workspace.path,
           ...(session.nativeSessionId ? { resumeId: session.nativeSessionId } : {}),
+          ...(mcpConfigPath ? { mcpConfigPath } : {}),
           permission: { mode: session.mode, maxAccess: this.options.permission.maxAccess },
         });
       } catch {
+        if (mcpListener) await mcpListener.close().catch(() => undefined);
+        if (mcpConfigPath) await rm(mcpConfigPath, { force: true });
         await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
         await this.options.channel.sendMarkdown(message.chatId, `Agent \`${session.agentId}\` 启动失败，请运行 \`oscar-lark-bridge doctor\` 检查本机环境。`, {
           replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
@@ -165,6 +197,9 @@ export class BridgeApplication {
       } finally {
         if (timeout) clearTimeout(timeout);
         await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
+        // MCP cleanup: close listener and remove the run-scoped config file.
+        if (mcpListener) await mcpListener.close().catch(() => undefined);
+        if (mcpConfigPath) await rm(mcpConfigPath, { force: true }).catch(() => undefined);
         const active = this.activeRuns.get(session.id);
         if (active?.runId === runId) this.activeRuns.delete(session.id);
       }

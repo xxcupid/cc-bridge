@@ -96,7 +96,7 @@ describe('oscar-bridge-mcp child process', () => {
     expect(r.error).toBeUndefined();
     expect(r.result).toBeDefined();
     expect(r.result!.isError).toBeFalsy();
-    expect(r.result!.content[0].text).toContain('mcp-msg-1');
+    expect(r.result!.content[0]!.text).toContain('mcp-msg-1');
   });
 
   it('lists send_file in tools/list', async () => {
@@ -119,6 +119,6 @@ describe('oscar-bridge-mcp child process', () => {
     });
     const r = response as { result: { content: Array<{ text: string }>; isError: boolean } };
     expect(r.result.isError).toBe(true);
-    expect(r.result.content[0].text).toMatch(/path is required/);
+    expect(r.result.content[0]!.text).toMatch(/path is required/);
   });
 });

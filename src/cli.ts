@@ -72,6 +72,7 @@ async function runProfile(paths: ProfilePaths, installSignals: boolean): Promise
     : undefined;
   const app = new BridgeApplication({
     channel, agents, defaultAgent: config.defaultAgent, defaultWorkspace: workspace.path,
+    oscarHome: config.dataDir,
     permission: config.permission,
     sessions: new SessionStore(join(config.dataDir, 'sessions.json')),
     workspaces: new WorkspaceStore(join(config.dataDir, 'workspaces.json')),

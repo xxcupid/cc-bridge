@@ -36,7 +36,7 @@ describe('startBridgeMcpListener', () => {
     const channel: ChannelPort = {
       onMessage() {}, onCardAction() {}, async connect() {}, async disconnect() {},
       async sendMarkdown() {},
-      async sendFile(chatId, source, fileName) {
+      async sendFile(chatId: string, source: string | Buffer, fileName: string) {
         sent.push({ chatId, source: String(source), fileName });
         return { messageId: 'msg-77' };
       },

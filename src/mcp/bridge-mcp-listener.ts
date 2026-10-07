@@ -1,6 +1,6 @@
 import { chmod, mkdir, unlink } from 'node:fs/promises';
 import { createServer, type Server as NetServer } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChannelPort } from '../channel/port.js';
@@ -17,7 +17,9 @@ export interface BridgeMcpHandle {
 }
 
 export async function startBridgeMcpListener(options: BridgeMcpListenerOptions): Promise<BridgeMcpHandle> {
-  const socketPath = path.join(os.tmpdir(), `oscar-bridge-${options.runId}-${randomUUID().slice(0, 8)}.sock`);
+  // macOS enforces a 104-byte sun_path limit; keep ours short by hashing only.
+  const id = randomBytes(8).toString('hex');
+  const socketPath = path.join(os.tmpdir(), `ob-${id}.sock`);
   await mkdir(path.dirname(socketPath), { recursive: true });
 
   const server: NetServer = createServer((sock) => {
