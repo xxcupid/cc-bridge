@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { AgentEvent, AgentId, AgentRunHandle } from '../domain/agent.js';
 import { messageScope, type CardAction, type IncomingMessage } from '../domain/message.js';
 import type { ChannelPort } from '../channel/port.js';
@@ -128,8 +129,13 @@ export class BridgeApplication {
       // Per-run MCP listener + config so the agent can call send_file.
       // Skipped when oscarHome is not provided (e.g. legacy tests).
       const oscarHome = this.options.oscarHome;
-      const runDir = oscarHome ? path.join(oscarHome, 'runs', runId) : undefined;
-      const mcpServerScript = path.resolve(process.cwd(), 'dist/mcp/oscar-bridge-mcp.js');
+      const runDir = oscarHome ? join(oscarHome, 'runs', runId) : undefined;
+      // The MCP child script lives next to the bundled `cli.js`. Resolve it
+      // relative to this file's dist location, NOT cwd (LaunchAgent launches
+      // us with cwd=/ and a bogus `dist/...` resolution ensues).
+      const here = dirname(fileURLToPath(import.meta.url));
+      const projectRoot = join(here, '..', '..');
+      const mcpServerScript = join(projectRoot, 'dist', 'mcp', 'oscar-bridge-mcp.js');
       let mcpListener: Awaited<ReturnType<typeof startBridgeMcpListener>> | undefined;
       let mcpConfigPath: string | undefined;
       if (runDir) {
@@ -142,7 +148,7 @@ export class BridgeApplication {
         // $CODEX_HOME/config.toml. The bridge writes whichever the active
         // agent expects and the agent adapter picks up the right one.
         if (session.agentId === 'codex') {
-          mcpConfigPath = path.join(runDir, 'config.toml');
+          mcpConfigPath = join(runDir, 'config.toml');
           await writeFile(mcpConfigPath, [
             '[mcp_servers.oscar-bridge]',
             `command = ${JSON.stringify(process.execPath)}`,
@@ -151,7 +157,7 @@ export class BridgeApplication {
             '',
           ].join('\n'));
         } else {
-          mcpConfigPath = path.join(runDir, 'mcp-config.json');
+          mcpConfigPath = join(runDir, 'mcp-config.json');
           await mkdir(runDir, { recursive: true });
           await writeFile(mcpConfigPath, JSON.stringify({
             mcpServers: {
