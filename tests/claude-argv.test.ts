@@ -24,4 +24,14 @@ describe('buildClaudeArgs', () => {
     const args = buildClaudeArgs(request({ resumeId: 'native-1', model: 'opus' }));
     expect(args).toEqual(expect.arrayContaining(['--resume', 'native-1', '--model', 'opus']));
   });
+
+  it('appends --mcp-config when mcpConfigPath is provided', () => {
+    const args = buildClaudeArgs(request({ mcpConfigPath: '/tmp/mcp.json' }));
+    expect(args).toEqual(expect.arrayContaining(['--mcp-config', '/tmp/mcp.json']));
+  });
+
+  it('omits --mcp-config when mcpConfigPath is not provided', () => {
+    const args = buildClaudeArgs(request());
+    expect(args).not.toContain('--mcp-config');
+  });
 });

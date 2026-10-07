@@ -24,6 +24,7 @@ export interface AgentRunRequest {
   cwd: string;
   resumeId?: string;
   model?: string;
+  mcpConfigPath?: string;
   permission: { mode: PermissionMode; maxAccess: AccessLevel };
 }
 

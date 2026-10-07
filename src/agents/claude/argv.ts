@@ -28,5 +28,6 @@ export function buildClaudeArgs(request: AgentRunRequest): string[] {
   if (permissionMode !== 'default') args.push('--permission-mode', permissionMode);
   if (request.resumeId) args.push('--resume', request.resumeId);
   if (request.model) args.push('--model', request.model);
+  if (request.mcpConfigPath) args.push('--mcp-config', request.mcpConfigPath);
   return args;
 }
