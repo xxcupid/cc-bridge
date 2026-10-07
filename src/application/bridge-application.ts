@@ -138,17 +138,31 @@ export class BridgeApplication {
           chatId: message.chatId,
           runId,
         });
-        mcpConfigPath = path.join(runDir, 'mcp-config.json');
-        await mkdir(runDir, { recursive: true });
-        await writeFile(mcpConfigPath, JSON.stringify({
-          mcpServers: {
-            'oscar-bridge': {
-              command: process.execPath,
-              args: [mcpServerScript],
-              env: { OSCAR_BRIDGE_SOCKET: mcpListener.socketPath },
+        // Claude reads JSON via --mcp-config; Codex reads TOML via
+        // $CODEX_HOME/config.toml. The bridge writes whichever the active
+        // agent expects and the agent adapter picks up the right one.
+        if (session.agentId === 'codex') {
+          mcpConfigPath = path.join(runDir, 'config.toml');
+          await writeFile(mcpConfigPath, [
+            '[mcp_servers.oscar-bridge]',
+            `command = ${JSON.stringify(process.execPath)}`,
+            `args = ${JSON.stringify([mcpServerScript])}`,
+            `env = { "OSCAR_BRIDGE_SOCKET" = ${JSON.stringify(mcpListener.socketPath)} }`,
+            '',
+          ].join('\n'));
+        } else {
+          mcpConfigPath = path.join(runDir, 'mcp-config.json');
+          await mkdir(runDir, { recursive: true });
+          await writeFile(mcpConfigPath, JSON.stringify({
+            mcpServers: {
+              'oscar-bridge': {
+                command: process.execPath,
+                args: [mcpServerScript],
+                env: { OSCAR_BRIDGE_SOCKET: mcpListener.socketPath },
+              },
             },
-          },
-        }, null, 2));
+          }, null, 2));
+        }
       }
       try {
         handle = await this.options.agents.get(session.agentId).start({

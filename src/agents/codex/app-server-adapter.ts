@@ -25,8 +25,15 @@ export class CodexAppServerAdapter implements AgentAdapter {
   }
 
   async start(request: AgentRunRequest): Promise<AgentRunHandle> {
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    if (request.mcpConfigPath) {
+      // Codex app-server reads MCP server definitions from
+      // `$CODEX_HOME/config.toml` under `[mcp_servers.<name>]`.
+      // The bridge writes `config.toml` next to `mcpConfigPath`.
+      childEnv.CODEX_HOME = require('node:path').dirname(request.mcpConfigPath);
+    }
     const child = this.spawnProcess(this.binary, ['app-server', '--listen', 'stdio://'], {
-      cwd: request.cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: request.cwd, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     const events = new AsyncEventQueue<AgentEvent>();
     const pending = new Map<number, PendingRpc>();
