@@ -10,6 +10,11 @@ export interface StreamCardOptions {
   replyInThread?: boolean;
 }
 
+export interface FileSendOptions extends StreamCardOptions {
+  /** Real filesystem roots approved for this run; string sources fail closed without them. */
+  allowedFileDirs?: string[];
+}
+
 export interface ChannelPort {
   onMessage(handler: (message: IncomingMessage) => Promise<void>): void;
   onCardAction(handler: (action: CardAction) => Promise<Record<string, unknown> | undefined>): void;
@@ -25,7 +30,7 @@ export interface ChannelPort {
     chatId: string,
     source: string | Buffer,
     fileName: string,
-    options?: StreamCardOptions,
+    options?: FileSendOptions,
   ): Promise<{ messageId: string }>;
   addReaction?(messageId: string, emojiType: string): Promise<string>;
   removeReaction?(messageId: string, reactionId: string): Promise<void>;

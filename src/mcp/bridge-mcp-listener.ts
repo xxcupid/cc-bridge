@@ -1,68 +1,77 @@
 import { chmod, mkdir, unlink } from 'node:fs/promises';
-import { createServer, type Server as NetServer } from 'node:net';
+import { createServer, type Socket } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import type { ChannelPort } from '../channel/port.js';
+import type { ChannelPort, FileSendOptions } from '../channel/port.js';
 
 export interface BridgeMcpListenerOptions {
   channel: ChannelPort;
   chatId: string;
   runId: string;
+  allowedFileDirs?: string[];
+  replyOptions?: Omit<FileSendOptions, 'allowedFileDirs'>;
 }
-
-export interface BridgeMcpHandle {
-  socketPath: string;
-  close(): Promise<void>;
-}
+export interface BridgeMcpHandle { socketPath: string; close(): Promise<void>; }
+const MAX_REQUEST_BYTES = 64 * 1024;
 
 export async function startBridgeMcpListener(options: BridgeMcpListenerOptions): Promise<BridgeMcpHandle> {
-  // macOS enforces a 104-byte sun_path limit; keep ours short by hashing only.
-  const id = randomBytes(8).toString('hex');
-  const socketPath = path.join(os.tmpdir(), `ob-${id}.sock`);
+  const socketPath = path.join(os.tmpdir(), `ob-${randomBytes(8).toString('hex')}.sock`);
   await mkdir(path.dirname(socketPath), { recursive: true });
-
-  const server: NetServer = createServer((sock) => {
-    let buffer = '';
-    sock.on('data', async (chunk) => {
-      buffer += chunk.toString('utf8');
-      const nl = buffer.indexOf('\n');
+  const sockets = new Set<Socket>();
+  let closed = false;
+  const server = createServer((sock) => {
+    sockets.add(sock);
+    sock.on('close', () => sockets.delete(sock));
+    sock.on('error', () => sock.destroy());
+    sock.setTimeout(125_000, () => sock.destroy());
+    let buffer = Buffer.alloc(0);
+    let handled = false;
+    const respond = (text: string, isError = false) => {
+      if (!sock.destroyed) sock.end(JSON.stringify({ content: [{ type: 'text', text }], ...(isError ? { isError } : {}) }) + '\n');
+    };
+    sock.on('data', (chunk) => {
+      if (handled || closed) return;
+      if (buffer.length + chunk.length > MAX_REQUEST_BYTES) { handled = true; respond('request too large', true); return; }
+      buffer = Buffer.concat([buffer, chunk]);
+      const nl = buffer.indexOf(10);
       if (nl < 0) return;
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      let request: { method: string; args: unknown };
-      try {
-        request = JSON.parse(line);
-      } catch {
-        sock.write(JSON.stringify({ content: [{ type: 'text', text: 'invalid json' }], isError: true }) + '\n');
-        return;
-      }
-      try {
-        if (request.method === 'send_file') {
-          const args = (request.args ?? {}) as { path?: string; file_name?: string };
-          if (!args.path || typeof args.path !== 'string') throw new Error('path is required');
+      handled = true; // Exactly one operation per connection; prevent concurrent re-entry.
+      void (async () => {
+        try {
+          const request = JSON.parse(buffer.subarray(0, nl).toString('utf8'));
+          if (request?.method !== 'send_file') throw new Error(`unknown method: ${request?.method}`);
+          const args = request.args;
+          if (!args || typeof args.path !== 'string' || !path.isAbsolute(args.path)) throw new Error('path is required and must be absolute');
+          if (args.file_name !== undefined && typeof args.file_name !== 'string') throw new Error('file_name must be a string');
           if (!options.channel.sendFile) throw new Error('channel does not support sendFile');
-          const fileName = args.file_name ?? path.basename(args.path);
-          const result = await options.channel.sendFile(options.chatId, args.path, fileName);
-          sock.write(JSON.stringify({ content: [{ type: 'text', text: `sent as message ${result.messageId}` }] }) + '\n');
-        } else {
-          sock.write(JSON.stringify({ content: [{ type: 'text', text: `unknown method: ${request.method}` }], isError: true }) + '\n');
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        sock.write(JSON.stringify({ content: [{ type: 'text', text: `send_file failed: ${msg}` }], isError: true }) + '\n');
-      }
+          const result = await options.channel.sendFile(options.chatId, args.path, args.file_name ?? path.basename(args.path), {
+            ...options.replyOptions, allowedFileDirs: options.allowedFileDirs ?? [],
+          });
+          respond(`sent as message ${result.messageId}`);
+        } catch (error) { respond(`send_file failed: ${error instanceof Error ? error.message : String(error)}`, true); }
+      })();
     });
   });
-
-  await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-  await chmod(socketPath, 0o600);
-
+  try {
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
+    await chmod(socketPath, 0o600);
+  } catch (error) {
+    server.close();
+    await unlink(socketPath).catch(() => undefined);
+    throw error;
+  }
+  let closePromise: Promise<void> | undefined;
   return {
     socketPath,
-    async close() {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await unlink(socketPath).catch(() => undefined);
+    close() {
+      return closePromise ??= (async () => {
+        closed = true;
+        const done = new Promise<void>((resolve) => server.close(() => resolve()));
+        for (const sock of sockets) sock.destroy();
+        await done;
+        await unlink(socketPath).catch(() => undefined);
+      })();
     },
   };
 }

@@ -105,4 +105,25 @@ describe('startBridgeMcpListener', () => {
     expect(parsed.isError).toBe(true);
     expect(parsed.content[0].text).toContain('unknown method: nope');
   });
+  it('closes idle client connections without blocking run cleanup', async () => {
+    const handle = await startBridgeMcpListener({ channel: {} as ChannelPort, chatId: 'oc', runId: 'cleanup' });
+    const sock = connect(handle.socketPath);
+    await new Promise<void>((resolve, reject) => { sock.once('connect', resolve); sock.once('error', reject); });
+    await handle.close();
+    await handle.close(); // idempotent
+    sock.destroy();
+  });
+
+  it('binds attachment replies to the triggering topic and sends only once per connection', async () => {
+    const calls: unknown[][] = [];
+    const handle = await startBridgeMcpListener({
+      channel: { async sendFile(...args: unknown[]) { calls.push(args); return { messageId: 'topic-file' }; } } as unknown as ChannelPort,
+      chatId: 'oc', runId: 'topic', allowedFileDirs: ['/tmp'], replyOptions: { replyTo: 'source', replyInThread: true },
+    });
+    try {
+      await request(handle.socketPath, { method: 'send_file', args: { path: '/tmp/report.xlsx' } });
+      expect(calls).toEqual([['oc', '/tmp/report.xlsx', 'report.xlsx', { allowedFileDirs: ['/tmp'], replyTo: 'source', replyInThread: true }]]);
+    } finally { await handle.close(); }
+  });
+
 });

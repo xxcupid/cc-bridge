@@ -38,16 +38,19 @@ The tool returns `isError: true` and a text payload when:
 
 - File does not exist (`ENOENT`)
 - Path is a directory (`EISDIR`)
-- Path is outside `allowedFileDirs` (currently `['/']`, with SDK blocklist for `/etc`, `/proc`, `/sys`, `/dev`)
+- Path is relative, outside the run workspace or host temporary directories, or resolves into a blocked directory
+- File is empty, is not a regular file, exceeds 30 MiB, or changes size while being read
 - Feishu upload fails (network / permission)
 
 The agent sees the error and decides what to do — the bridge does not send any extra message to the user on failure. To recover, the agent may try a different path, regenerate the file, or report the error back to you in the streaming card.
 
 ## Security
 
-The default `allowedFileDirs: ['/']` allows the agent to read any local file path. This is suitable for a personal-use bridge on a trusted machine. The SDK still blocks `/etc`, `/proc`, `/sys`, `/dev` from being read, so secrets under those paths cannot be exfiltrated.
+Bridge validates local paths itself before passing a Buffer to the SDK. String sources must use an absolute path and resolve inside the current run workspace, `os.tmpdir()`, or `/tmp`. Symlinks resolving outside these roots are rejected. System directories `/etc`, `/proc`, `/sys`, `/dev` (including `/private/etc`) and protected state directories `.ssh`, `.aws`, `.codex`, `.claude`, `.openclaw`, `.oscar-lark-bridge`, `.git` are blocked even inside an allowed root. Files must be regular, non-empty and at most 30 MiB. The same limit applies to Buffer sources.
 
-If you need to restrict the agent's read scope, edit `src/channel/lark-channel.ts` and set a tighter allowlist, then rebuild.
+These checks are Bridge-side checks; Buffer input bypasses SDK path checks. The tool does not scan contents for secrets. Generate intended attachments in the run workspace or a temporary directory. To approve additional roots, extend the explicit run roots in `BridgeApplication`; do not disable validation in the channel.
+
+The tool is scoped to the triggering chat and inherits its reply/topic options. Only Claude and Codex runs receive MCP configuration; unrelated adapters keep their prior behavior.
 
 ## Architecture
 
@@ -59,8 +62,8 @@ If you need to restrict the agent's read scope, edit `src/channel/lark-channel.t
 For each run the bridge:
 
 1. Creates a unix domain socket listener (path under `os.tmpdir()`, `chmod 0600`).
-2. Spawns Claude/Codex with an `--mcp-config` (Claude) or `CODEX_HOME/config.toml` (Codex) pointing at the bridge-written MCP server definition.
-3. After the run finishes, closes the listener and removes the run-scoped MCP config file.
+2. Writes a run-scoped JSON MCP definition. Claude uses `--mcp-config`; Codex receives `-c mcp_servers.oscar-bridge.*` command-line overrides. The existing `CODEX_HOME`, login, settings and native session store remain unchanged.
+3. On completion, startup/setup failure or shutdown, destroys client sockets, closes the listener, and removes the run directory. A stalled client cannot block session cleanup.
 
 ## Deployment
 
@@ -77,5 +80,13 @@ launchctl load ~/Library/LaunchAgents/com.oscar.lark-bridge.supervisor.plist
 ## Troubleshooting
 
 - **Agent says "send_file failed: channel does not support sendFile"** — bridge is running an older version without `sendFile`. Rebuild and restart the LaunchAgent.
-- **Agent can't find the `send_file` tool** — check `~/.oscar-lark-bridge/logs/supervisor.stdout.log` for `MCP config written:` lines. If absent, your profile is missing `OSCAR_LARK_DATA_DIR`/data dir config.
+- **Agent can't find the `send_file` tool** — confirm the profile has a data directory, runs Claude/Codex, and the built `dist/mcp/oscar-bridge-mcp.js` exists. Source-mode `pnpm dev` also requires a build. Check for `Bridge MCP setup failed` and agent startup errors.
 - **Feishu rejects the upload with "permission denied"** — the Feishu app may need the `im:message` and `im:resource` scopes enabled in the developer console.
+
+### Delivery timeouts
+
+The MCP call allows 120 seconds for file upload plus message dispatch. If the connection closes or times out after dispatch may have begun, the result is unknown; do not automatically retry, as that could duplicate the attachment. Confirm delivery in Feishu first.
+
+### Validation
+
+Run `pnpm typecheck`, `pnpm build`, then `pnpm test` (the MCP child-process tests exercise the built script). Regression coverage includes Codex MCP injection across two turns without moving its home, real-path boundaries, topic reply options, idle connections, setup/startup failure and shutdown cleanup. Automated tests use fake channels and do not send real Feishu messages.

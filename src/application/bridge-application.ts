@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent, AgentId, AgentRunHandle } from '../domain/agent.js';
 import { messageScope, type CardAction, type IncomingMessage } from '../domain/message.js';
@@ -130,100 +131,87 @@ export class BridgeApplication {
       // Skipped when oscarHome is not provided (e.g. legacy tests).
       const oscarHome = this.options.oscarHome;
       const runDir = oscarHome ? join(oscarHome, 'runs', runId) : undefined;
-      // The MCP child script lives next to the bundled `cli.js`. Resolve it
-      // relative to this file's dist location, NOT cwd (LaunchAgent launches
-      // us with cwd=/ and a bogus `dist/...` resolution ensues).
       const here = dirname(fileURLToPath(import.meta.url));
-      // tsup bundles bridge-application into dist/chunk-*.js (sibling of cli.js),
-      // so a single `..` from `here` lands on the project root.
-      const projectRoot = join(here, '..');
-      const mcpServerScript = join(projectRoot, 'dist', 'mcp', 'oscar-bridge-mcp.js');
+      const mcpServerScript = here.endsWith(`${join('src', 'application')}`)
+        ? resolve(here, '../../dist/mcp/oscar-bridge-mcp.js')
+        : resolve(here, 'mcp/oscar-bridge-mcp.js');
       let mcpListener: Awaited<ReturnType<typeof startBridgeMcpListener>> | undefined;
-      let mcpConfigPath: string | undefined;
-      if (runDir) {
-        mcpListener = await startBridgeMcpListener({
-          channel: this.options.channel,
-          chatId: message.chatId,
-          runId,
-        });
-        await mkdir(runDir, { recursive: true });
-        // Claude reads JSON via --mcp-config; Codex reads TOML via
-        // $CODEX_HOME/config.toml. The bridge writes whichever the active
-        // agent expects and the agent adapter picks up the right one.
-        if (session.agentId === 'codex') {
-          mcpConfigPath = join(runDir, 'config.toml');
-          await writeFile(mcpConfigPath, [
-            '[mcp_servers.oscar-bridge]',
-            `command = ${JSON.stringify(process.execPath)}`,
-            `args = ${JSON.stringify([mcpServerScript])}`,
-            `env = { "OSCAR_BRIDGE_SOCKET" = ${JSON.stringify(mcpListener.socketPath)} }`,
-            '',
-          ].join('\n'));
-        } else {
-          mcpConfigPath = join(runDir, 'mcp-config.json');
-          await writeFile(mcpConfigPath, JSON.stringify({
-            mcpServers: {
-              'oscar-bridge': {
-                command: process.execPath,
-                args: [mcpServerScript],
-                env: { OSCAR_BRIDGE_SOCKET: mcpListener.socketPath },
-              },
-            },
-          }, null, 2));
-        }
-      }
-      try {
-        handle = await this.options.agents.get(session.agentId).start({
-          runId,
-          sessionId: session.id,
-          prompt: message.chatType === 'group'
-            ? buildGroupPrompt(message, this.options.groupContext?.recent(message) ?? [])
-            : message.content,
-          cwd: workspace.path,
-          ...(session.nativeSessionId ? { resumeId: session.nativeSessionId } : {}),
-          ...(mcpConfigPath ? { mcpConfigPath } : {}),
-          permission: { mode: session.mode, maxAccess: this.options.permission.maxAccess },
-        });
-      } catch {
-        if (mcpListener) await mcpListener.close().catch(() => undefined);
-        if (mcpConfigPath) await rm(mcpConfigPath, { force: true });
-        await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
-        await this.options.channel.sendMarkdown(message.chatId, `Agent \`${session.agentId}\` 启动失败，请运行 \`oscar-lark-bridge doctor\` 检查本机环境。`, {
-          replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
-        });
-        return;
-      }
-      if (this.stopping) {
-        await handle.cancel('bridge is shutting down');
-        await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
-        return;
-      }
-      this.activeRuns.set(session.id, { runId, scope, sessionId: session.id, ownerId: message.senderId, handle });
-      const timeoutMs = this.options.runTimeoutMs ?? 1_800_000;
-      const timeout = timeoutMs > 0 ? setTimeout(() => {
-        void handle.cancel(`run timed out after ${timeoutMs}ms`).catch(() => undefined);
-      }, timeoutMs) : undefined;
+      // File-send paths are bounded by the run workspace and host temp directory.
       try {
         try {
-          await this.presenter.present(runId, scope, message, this.recordSessionEvents({
-            runId, sessionId: session.id, scope, operatorId: message.senderId, events: handle.events,
-          }));
-        } catch {
-          await Promise.allSettled([
-            handle.cancel('card presentation failed'),
-            this.options.channel.sendMarkdown(message.chatId, '流式卡片更新失败，任务已安全停止。请稍后重试。', {
-              replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
-            }),
-          ]);
+          if (runDir && (session.agentId === 'codex' || session.agentId === 'claude')) {
+            mcpListener = await startBridgeMcpListener({
+              channel: this.options.channel, chatId: message.chatId, runId,
+              allowedFileDirs: [workspace.path, tmpdir(), '/tmp'],
+              replyOptions: { replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}) },
+            });
+            await mkdir(runDir, { recursive: true, mode: 0o700 });
+            const mcpConfigPath = join(runDir, 'mcp-config.json');
+            await writeFile(mcpConfigPath, JSON.stringify({
+              mcpServers: { 'oscar-bridge': {
+                command: process.execPath, args: [mcpServerScript],
+                env: { OSCAR_BRIDGE_SOCKET: mcpListener.socketPath },
+              } },
+            }), { mode: 0o600 });
+          }
+        } catch (error) {
+          console.warn(`Bridge MCP setup failed: ${String(error)}`);
+          await this.options.channel.sendMarkdown(message.chatId, '文件发送工具初始化失败，请检查本机 Bridge 配置后重试。', {
+            replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
+          });
+          return;
+        }
+        const mcpConfigPath = mcpListener && runDir ? join(runDir, 'mcp-config.json') : undefined;
+        try {
+          handle = await this.options.agents.get(session.agentId).start({
+            runId,
+            sessionId: session.id,
+            prompt: message.chatType === 'group'
+              ? buildGroupPrompt(message, this.options.groupContext?.recent(message) ?? [])
+              : message.content,
+            cwd: workspace.path,
+            ...(session.nativeSessionId ? { resumeId: session.nativeSessionId } : {}),
+            ...(mcpConfigPath ? { mcpConfigPath } : {}),
+            permission: { mode: session.mode, maxAccess: this.options.permission.maxAccess },
+          });
+        } catch (error) {
+          console.warn(`Bridge agent startup failed (${session.agentId}): ${String(error)}`);
+          await this.options.channel.sendMarkdown(message.chatId, `Agent \`${session.agentId}\` 启动失败，请运行 \`oscar-lark-bridge doctor\` 检查本机环境。`, {
+            replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
+          });
+          return;
+        }
+        if (this.stopping) {
+          await handle.cancel('bridge is shutting down');
+          return;
+        }
+        this.activeRuns.set(session.id, { runId, scope, sessionId: session.id, ownerId: message.senderId, handle });
+        const timeoutMs = this.options.runTimeoutMs ?? 1_800_000;
+        const timeout = timeoutMs > 0 ? setTimeout(() => {
+          void handle.cancel(`run timed out after ${timeoutMs}ms`).catch(() => undefined);
+        }, timeoutMs) : undefined;
+        try {
+          try {
+            await this.presenter.present(runId, scope, message, this.recordSessionEvents({
+              runId, sessionId: session.id, scope, operatorId: message.senderId, events: handle.events,
+            }));
+          } catch {
+            await Promise.allSettled([
+              handle.cancel('card presentation failed'),
+              this.options.channel.sendMarkdown(message.chatId, '流式卡片更新失败，任务已安全停止。请稍后重试。', {
+                replyTo: message.messageId, ...(message.threadId ? { replyInThread: true } : {}),
+              }),
+            ]);
+          }
+        } finally {
+          if (timeout) clearTimeout(timeout);
+          const active = this.activeRuns.get(session.id);
+          if (active?.runId === runId) this.activeRuns.delete(session.id);
         }
       } finally {
-        if (timeout) clearTimeout(timeout);
         await removeWorkingReaction(this.options.channel, message.messageId, reactionId);
-        // MCP cleanup: close listener and remove the run-scoped config file.
         if (mcpListener) await mcpListener.close().catch(() => undefined);
-        if (mcpConfigPath) await rm(mcpConfigPath, { force: true }).catch(() => undefined);
-        const active = this.activeRuns.get(session.id);
-        if (active?.runId === runId) this.activeRuns.delete(session.id);
+        if (runDir) await rm(runDir, { recursive: true, force: true }).catch(() => undefined);
       }
     });
   }

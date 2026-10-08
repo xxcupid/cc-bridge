@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import { readFile } from 'node:fs/promises';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import spawn from 'cross-spawn';
 import type { AccessLevel, AgentAdapter, AgentEvent, AgentRunHandle, AgentRunRequest, RunMetrics } from '../../domain/agent.js';
@@ -25,14 +26,20 @@ export class CodexAppServerAdapter implements AgentAdapter {
   }
 
   async start(request: AgentRunRequest): Promise<AgentRunHandle> {
+    // Run-scoped MCP overrides must not move auth, config or session storage.
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    const argv = ['app-server', '--listen', 'stdio://'];
     if (request.mcpConfigPath) {
-      // Codex app-server reads MCP server definitions from
-      // `$CODEX_HOME/config.toml` under `[mcp_servers.<name>]`.
-      // The bridge writes `config.toml` next to `mcpConfigPath`.
-      childEnv.CODEX_HOME = require('node:path').dirname(request.mcpConfigPath);
+      const config = JSON.parse(await readFile(request.mcpConfigPath, 'utf8'));
+      const server = config.mcpServers?.['oscar-bridge'];
+      if (!server || typeof server.command !== 'string' || !Array.isArray(server.args)
+        || !server.args.every((arg: unknown) => typeof arg === 'string')
+        || typeof server.env?.OSCAR_BRIDGE_SOCKET !== 'string') throw new Error('Invalid bridge MCP configuration');
+      argv.push('-c', `mcp_servers.oscar-bridge.command=${JSON.stringify(server.command)}`,
+        '-c', `mcp_servers.oscar-bridge.args=${JSON.stringify(server.args)}`,
+        '-c', `mcp_servers.oscar-bridge.env={ OSCAR_BRIDGE_SOCKET = ${JSON.stringify(server.env.OSCAR_BRIDGE_SOCKET)} }`);
     }
-    const child = this.spawnProcess(this.binary, ['app-server', '--listen', 'stdio://'], {
+    const child = this.spawnProcess(this.binary, argv, {
       cwd: request.cwd, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     const events = new AsyncEventQueue<AgentEvent>();

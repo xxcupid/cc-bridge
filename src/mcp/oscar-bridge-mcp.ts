@@ -55,22 +55,27 @@ function callBridge(method: string, args: unknown): Promise<{ content: Array<{ t
   return new Promise((resolve, reject) => {
     const sock: Socket = connect(SOCKET_PATH!);
     let buffer = '';
-    const timer = setTimeout(() => { sock.destroy(); reject(new Error('bridge timeout (30s)')); }, 30_000);
+    let settled = false;
+    const finish = (error?: Error, result?: { content: Array<{ type: string; text: string }>; isError?: boolean }) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); sock.destroy();
+      if (error) reject(error); else resolve(result!);
+    };
+    // Upload and message dispatch each have their own HTTP timeout.
+    const timer = setTimeout(() => finish(new Error('bridge timeout (120s); delivery outcome unknown, do not retry automatically')), 120_000);
     sock.on('data', (chunk) => {
       buffer += chunk.toString('utf8');
+      if (buffer.length > 64 * 1024) { finish(new Error('bridge response too large')); return; }
       const nl = buffer.indexOf('\n');
       if (nl >= 0) {
-        clearTimeout(timer);
-        try {
-          resolve(JSON.parse(buffer.slice(0, nl)));
-          sock.end();
-        } catch (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-        }
+        try { finish(undefined, JSON.parse(buffer.slice(0, nl))); }
+        catch (err) { finish(err instanceof Error ? err : new Error(String(err))); }
       }
     });
-    sock.on('error', (err) => { clearTimeout(timer); reject(err); });
-    sock.write(JSON.stringify({ method, args }) + '\n');
+    sock.on('error', (err) => finish(err));
+    sock.on('close', () => { if (!settled) finish(new Error('bridge connection closed; delivery outcome unknown, do not retry automatically')); });
+    sock.once('connect', () => sock.write(JSON.stringify({ method, args }) + '\n'));
+
   });
 }
 

@@ -1,6 +1,9 @@
 import { EventEmitter } from 'node:events';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type spawn from 'cross-spawn';
 import { describe, expect, it } from 'vitest';
 import { CodexAppServerAdapter } from '../src/agents/codex/app-server-adapter.js';
@@ -69,6 +72,56 @@ describe('CodexAppServerAdapter', () => {
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'session.started', nativeSessionId: 'thread-1' } });
     child.send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'run.completed' } });
+  });
+
+  it('injects per-run MCP config without changing Codex home and resumes the same thread', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'codex-mcp-review-'));
+    const home = process.env.CODEX_HOME;
+    const spawns: Array<{ argv: string[]; env: NodeJS.ProcessEnv }> = [];
+    try {
+      for (let run = 0; run < 2; run++) {
+        const config = join(dir, `run-${run}.json`);
+        await writeFile(config, JSON.stringify({ mcpServers: { 'oscar-bridge': {
+          command: '/node', args: ['/bridge/mcp.js'], env: { OSCAR_BRIDGE_SOCKET: `/tmp/socket-${run}` },
+        } } }));
+        const child = new FakeAppServer();
+        const adapter = new CodexAppServerAdapter({ spawnProcess: ((_binary: string, argv: readonly string[], opts: { env?: NodeJS.ProcessEnv }) => {
+          spawns.push({ argv: argv as string[], env: opts?.env ?? {} });
+          return child;
+        }) as unknown as typeof spawn });
+        const handle = await adapter.start({ runId: `r${run}`, sessionId: 's', prompt: 'continue', cwd: dir,
+          mcpConfigPath: config, ...(run ? { resumeId: 'thread-1' } : {}), permission: { mode: 'default', maxAccess: 'workspace' } });
+        if (run) expect(child.messages.find(m => m.method === 'thread/resume')).toMatchObject({ params: { threadId: 'thread-1' } });
+        child.send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+        for await (const _ of handle.events) { /* drain */ }
+      }
+      expect(spawns.every(s => s.env.CODEX_HOME === home)).toBe(true);
+      expect(spawns[0]!.argv).toContain('mcp_servers.oscar-bridge.command="/node"');
+      expect(spawns[0]!.argv.join(' ')).toContain('/tmp/socket-0');
+      expect(spawns[1]!.argv.join(' ')).toContain('/tmp/socket-1');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('starts the compiled ESM MCP path without a CommonJS require or home override', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'built-codex-mcp-'));
+    try {
+      const config = join(dir, 'config.json');
+      await writeFile(config, JSON.stringify({ mcpServers: { 'oscar-bridge': {
+        command: process.execPath, args: ['/tmp/mock.js'], env: { OSCAR_BRIDGE_SOCKET: '/tmp/mock.sock' },
+      } } }));
+      const script = `
+        import { CodexAppServerAdapter } from ${JSON.stringify(join(process.cwd(), 'dist/index.js'))};
+        const home = process.env.CODEX_HOME;
+        const adapter = new CodexAppServerAdapter({ spawnProcess(_bin, argv, opts) {
+          if (opts.env.CODEX_HOME !== home) throw new Error('home changed');
+          if (!argv.some(v => v.startsWith('mcp_servers.oscar-bridge.command='))) throw new Error('missing MCP');
+          throw new Error('EXPECTED_SPAWN');
+        }});
+        try { await adapter.start({ runId:'r',sessionId:'s',prompt:'test',cwd:'/tmp',mcpConfigPath:${JSON.stringify(config)},permission:{mode:'default',maxAccess:'workspace'} }); }
+        catch(e) { if(e.message !== 'EXPECTED_SPAWN') throw e; console.log('compiled smoke passed'); }
+      `;
+      expect(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 })).toContain('compiled smoke passed');
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
   it('terminates the app-server when bootstrap fails', async () => {

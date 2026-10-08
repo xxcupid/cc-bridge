@@ -1,7 +1,7 @@
 import { createLarkChannel, type LarkChannel } from '@larksuite/channel';
-import { readFile } from 'node:fs/promises';
+import { readOutboundFile, MAX_OUTBOUND_FILE_BYTES } from './outbound-file.js';
 import type { CardAction, IncomingMessage } from '../domain/message.js';
-import type { CardController, ChannelPort, StreamCardOptions } from './port.js';
+import type { CardController, ChannelPort, FileSendOptions, StreamCardOptions } from './port.js';
 
 export interface LarkChannelGatewayOptions {
   profile?: string;
@@ -116,15 +116,14 @@ export class LarkChannelGateway implements ChannelPort {
     chatId: string,
     source: string | Buffer,
     fileName: string,
-    options: StreamCardOptions = {},
+    options: FileSendOptions = {},
   ): Promise<{ messageId: string }> {
-    // The SDK's `outbound.allowedFileDirs` matcher has a known bug with '/':
-    // realpath('/') === '/' and the check `realPath.startsWith(d + sep)` becomes
-    // `startsWith('//')`, always false. We side-step the matcher entirely by
-    // resolving string sources to a Buffer before handing off — the SDK
-    // accepts Buffer sources without invoking the allowlist check.
-    const payload = typeof source === 'string' ? await readFile(source) : source;
-    return this.channel.send(chatId, { file: { source: payload, fileName } }, options);
+    const { allowedFileDirs, ...replyOptions } = options;
+    if (!fileName.trim() || /[\x00-\x1f/\\]/.test(fileName)) throw new Error('Invalid display filename');
+    const payload = typeof source === 'string'
+      ? await readOutboundFile(source, allowedFileDirs ?? []) : source;
+    if (payload.length === 0 || payload.length > MAX_OUTBOUND_FILE_BYTES) throw new Error('File must be non-empty and at most 30 MiB');
+    return this.channel.send(chatId, { file: { source: payload, fileName } }, replyOptions);
   }
 
   addReaction(messageId: string, emojiType: string): Promise<string> {

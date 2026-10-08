@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { LarkChannelGateway } from '../../src/channel/lark-channel.js';
 
@@ -22,8 +25,6 @@ describe('LarkChannelGateway.sendFile', () => {
   });
 
   it('resolves a string source to a Buffer before handing to the SDK', async () => {
-    // Skip when fs.readFile isn't easy to mock — just confirm Buffer passthrough
-    // works for the common case and trust readFile to be tested by Node itself.
     const channel = {
       send: vi.fn().mockResolvedValue({ messageId: 'm-file-2' }),
       on: vi.fn(),
@@ -33,9 +34,13 @@ describe('LarkChannelGateway.sendFile', () => {
     const gateway = new LarkChannelGateway({ appId: 'cli_x', appSecret: 'sec', profile: 'test' });
     (gateway as unknown as { channel: typeof channel }).channel = channel;
 
-    const result = await gateway.sendFile('oc_chat', Buffer.from('abc'), 'a.txt');
-    expect(result.messageId).toBe('m-file-2');
-    const arg = channel.send.mock.calls[0]![1] as { file: { source: unknown } };
-    expect(Buffer.isBuffer(arg.file.source)).toBe(true);
+    const dir = await mkdtemp(join(tmpdir(), 'gateway-file-'));
+    try {
+      const file = join(dir, 'a.txt'); await writeFile(file, 'abc');
+      const result = await gateway.sendFile('oc_chat', file, 'a.txt', { allowedFileDirs: [dir], replyTo: 'source', replyInThread: true });
+      expect(result.messageId).toBe('m-file-2');
+      expect(channel.send).toHaveBeenCalledWith('oc_chat', { file: { source: Buffer.from('abc'), fileName: 'a.txt' } }, { replyTo: 'source', replyInThread: true });
+      await expect(gateway.sendFile('oc_chat', file, 'a.txt')).rejects.toThrow('outside allowed');
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
